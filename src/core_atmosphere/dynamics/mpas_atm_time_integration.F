@@ -121,6 +121,33 @@ module atm_time_integration
    real (kind=RKIND), parameter, private :: seconds_per_day = 86400.0_RKIND
 
 
+   interface
+      subroutine mpas_kokkos_init() bind(c, name="mpas_kokkos_init")
+      end subroutine mpas_kokkos_init
+
+      subroutine mpas_kokkos_finalize() bind(c, name="mpas_kokkos_finalize")
+      end subroutine mpas_kokkos_finalize
+
+      subroutine atm_compute_vert_imp_coefs_kokkos(nCells, nVertLevels, dts, epssm, &
+                                   zz, cqw, p, t, rb, rtb, pb, rt, qtot, &
+                                   cofwr, cofwz, coftz, cofwt, &
+                                   a_tri, alpha_tri, gamma_tri, cofrz, rdzw, fzm, fzp, rdzu, &
+                                   cellSolveStart, cellSolveEnd, &
+                                   gravity, rgas, cp) bind(c, name="atm_compute_vert_imp_coefs_kokkos")
+         use mpas_kind_types
+         implicit none
+         integer, intent(in), value :: nCells, nVertLevels
+         real (kind=RKIND), intent(in), value :: dts, epssm
+         real (kind=RKIND), intent(in) :: zz(*), cqw(*), p(*), t(*), rb(*), rtb(*), pb(*), rt(*), qtot(*)
+         real (kind=RKIND), intent(inout) :: cofwr(*), cofwz(*), coftz(*), cofwt(*)
+         real (kind=RKIND), intent(inout) :: a_tri(*), alpha_tri(*), gamma_tri(*)
+         real (kind=RKIND), intent(in) :: cofrz(*), rdzw(*), fzm(*), fzp(*), rdzu(*)
+         integer, intent(in), value :: cellSolveStart, cellSolveEnd
+         real (kind=RKIND), intent(in), value :: gravity, rgas, cp
+      end subroutine atm_compute_vert_imp_coefs_kokkos
+   end interface
+
+
    contains
 
 
@@ -458,6 +485,7 @@ module atm_time_integration
       !$acc enter data copyin(meshScalingDel4)
 #endif
 
+      call mpas_kokkos_init()
    end subroutine mpas_atm_dynamics_init
 
 
@@ -733,6 +761,7 @@ module atm_time_integration
       !$acc exit data delete(meshScalingDel4)
 #endif
 
+      call mpas_kokkos_finalize()
    end subroutine mpas_atm_dynamics_finalize
 
 
@@ -2212,11 +2241,20 @@ module atm_time_integration
       call mpas_pool_get_dimension(state, 'moist_end', moist_end)
 
 
+#ifdef MPAS_KOKKOS
+      call atm_compute_vert_imp_coefs_kokkos(nCells, nVertLevels, dts, epssm, &
+                                   zz, cqw, p, t, rb, rtb, pb, rt, qtot, &
+                                   cofwr, cofwz, coftz, cofwt, &
+                                   a_tri, alpha_tri, gamma_tri, cofrz, rdzw, fzm, fzp, rdzu, &
+                                   cellSolveStart, cellSolveEnd, &
+                                   gravity, rgas, cp)
+#else
       call atm_compute_vert_imp_coefs_work(nCells, moist_start, moist_end, dts, epssm, &
                                    zz, cqw, p, t, rb, rtb, pb, rt, cofwr, cofwz, coftz, cofwt, &
                                    a_tri, alpha_tri, gamma_tri, cofrz, rdzw, fzm, fzp, rdzu, scalars, &
                                    cellStart, cellEnd, edgeStart, edgeEnd, &
                                    cellSolveStart, cellSolveEnd, edgeSolveStart, edgeSolveEnd)
+#endif
 
 
    end subroutine atm_compute_vert_imp_coefs
