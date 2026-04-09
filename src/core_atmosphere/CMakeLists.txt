@@ -336,7 +336,8 @@ list(TRANSFORM ATMOSPHERE_CORE_DIAGNOSTIC_SOURCES PREPEND diagnostics/)
 set(ATMOSPHERE_CORE_DYNAMICS_SOURCES
     mpas_atm_boundaries.F
     mpas_atm_iau.F
-    mpas_atm_time_integration.F)
+    mpas_atm_time_integration.F
+    cpp/atm_dynamics_kernels.cpp)
 list(TRANSFORM ATMOSPHERE_CORE_DYNAMICS_SOURCES PREPEND dynamics/)
 
 # utils/
@@ -377,9 +378,14 @@ add_library(core_atmosphere ${ATMOSPHERE_CORE_SOURCES}
             ${ATMOSPHERE_CORE_DIAGNOSTIC_SOURCES}
             ${ATMOSPHERE_CORE_DYNAMICS_SOURCES})
 
+# Find Kokkos
+find_package(Kokkos REQUIRED)
+target_link_libraries(core_atmosphere PUBLIC Kokkos::kokkos)
+
 set(CORE_ATMOSPHERE_COMPILE_DEFINITIONS
     mpas=1
     MPAS_NATIVE_TIMERS
+    MPAS_KOKKOS
 )
 if (${DO_PHYSICS})
     list(APPEND CORE_ATMOSPHERE_COMPILE_DEFINITIONS DO_PHYSICS)
