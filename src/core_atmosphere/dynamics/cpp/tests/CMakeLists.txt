@@ -188,3 +188,23 @@ add_test(NAME dimension_validation_test_suite COMMAND $<TARGET_FILE:dimension_va
 set_tests_properties(dimension_validation_test_suite PROPERTIES
     TIMEOUT 60
 )
+
+# ─── Dynamic Bindings Unit Test Suite ────────────────────────────────────────
+add_executable(test_dynamic_bindings
+    main_interop.cpp
+    test_dynamic_bindings.cpp
+)
+
+target_link_libraries(test_dynamic_bindings
+    PRIVATE
+        dycore_cpp
+        GTest::gtest
+)
+
+# Kokkos requires OpenMP link flags
+target_link_options(test_dynamic_bindings PRIVATE -fopenmp)
+
+add_test(NAME test_dynamic_bindings COMMAND $<TARGET_FILE:test_dynamic_bindings>)
+set_tests_properties(test_dynamic_bindings PROPERTIES
+    TIMEOUT 60
+)
