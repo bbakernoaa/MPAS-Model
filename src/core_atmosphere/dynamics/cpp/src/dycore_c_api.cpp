@@ -19,6 +19,8 @@
 
 #include <Kokkos_Core.hpp>
 
+#include <mpi.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -44,6 +46,7 @@ struct DycoreContext {
   MeshDataT mesh{};
   FieldStore state_store{};
   Config config;
+  MPI_Comm mpi_comm = MPI_COMM_WORLD;
 
   /// Names of prognostic state fields registered in state_store (for batch sync).
   std::vector<std::string> prognostic_field_names;
@@ -82,7 +85,9 @@ int dycore_init(
     int dynamics_split_steps,
     int config_monotonic, int config_scalar_advection,
     int config_apply_lbcs, int config_mix_full,
-    int config_iau, int gpu_aware_comm) {
+    int config_iau, int gpu_aware_comm,
+    /* MPI */
+    int mpi_comm_fortran) {
 
   // ── 0a. Dimension validation (Req 8.3) ───────────────────────────────────
   if (nCells <= 0 || nEdges <= 0 || nVertLevels <= 0 || maxEdges <= 0) {
@@ -111,6 +116,9 @@ int dycore_init(
     return 1;  // Kokkos initialization failed
   }
 
+  // ── 1b. Convert Fortran MPI communicator to C handle ─────────────────────
+  MPI_Comm mpi_comm = MPI_Comm_f2c(mpi_comm_fortran);
+
   // ── 2. Build Config from scalar parameters (Req 13.2) ────────────────────
   auto cfg = ConfigBuilder{}
       .time_integration_order(time_integration_order)
@@ -130,6 +138,7 @@ int dycore_init(
   // ── 3. Allocate the context ───────────────────────────────────────────────
   g_context = std::make_unique<DycoreContext>(std::move(cfg));
   g_context->num_scalars = num_scalars;
+  g_context->mpi_comm = mpi_comm;
 
   MeshDims& dims = g_context->dims;
   dims.nCells = nCells;

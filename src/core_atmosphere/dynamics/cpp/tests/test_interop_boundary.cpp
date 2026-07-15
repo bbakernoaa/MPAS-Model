@@ -121,7 +121,8 @@ struct TestBuffers {
         /* config_apply_lbcs */ 0,
         /* config_mix_full */ 0,
         /* config_iau */ 0,
-        /* gpu_aware_comm */ 0);
+        /* gpu_aware_comm */ 0,
+        /* mpi_comm_fortran */ 0);
   }
 };
 

@@ -134,7 +134,8 @@ TEST(FFIPassthrough, DimensionValidationRejectsCorruptedValues) {
         nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr,
-        3, 6, 1, 1, 1, 0, 0, 0, 0);
+        3, 6, 1, 1, 1, 0, 0, 0, 0,
+        /* mpi_comm_fortran */ 0);
 
     // The C API validates dimensions FIRST (before null checks).
     // Error code 2 = invalid dimensions detected.
@@ -183,7 +184,8 @@ TEST(FFIPassthrough, ValidDimensionsAcceptedByValidation) {
         nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr,
-        3, 6, 1, 1, 1, 0, 0, 0, 0);
+        3, 6, 1, 1, 1, 0, 0, 0, 0,
+        /* mpi_comm_fortran */ 0);
 
     // Should pass dimension validation (not return 2).
     // Expected: returns 3 (null pointer check) since we passed nullptr arrays.
@@ -259,7 +261,8 @@ TEST(FFIPassthrough, ConfigScalarsPassThroughFFI) {
         dynamics_split_steps,
         config_monotonic, config_scalar_advection,
         config_apply_lbcs, config_mix_full,
-        config_iau, gpu_aware_comm);
+        config_iau, gpu_aware_comm,
+        /* mpi_comm_fortran */ 0);
 
     // Should pass dimension validation but fail on null pointers.
     // If config values crashed or corrupted the call, we wouldn't get here.
@@ -348,7 +351,8 @@ TEST_F(FFIPassthroughLifecycle, FullInitFinalizeWithRandomScalars) {
       dynamics_split_steps,
       config_monotonic, config_scalar_advection,
       config_apply_lbcs, config_mix_full,
-      config_iau, gpu_aware_comm);
+      config_iau, gpu_aware_comm,
+      /* mpi_comm_fortran */ 0);
 
   ASSERT_EQ(rc, 0)
       << "dycore_init with random valid scalars should succeed. "

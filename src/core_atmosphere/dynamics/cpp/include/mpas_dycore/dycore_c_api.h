@@ -74,6 +74,7 @@ extern "C" {
  * @param config_mix_full         Full-state mixing flag (0/1).
  * @param config_iau              IAU enable (0/1).
  * @param gpu_aware_comm          GPU-aware MPI flag (0/1).
+ * @param mpi_comm_fortran  Fortran MPI communicator handle (converted via MPI_Comm_f2c).
  *
  * @return 0 on success, non-zero error code on failure:
  *   - 1: Kokkos initialization failed
@@ -100,7 +101,9 @@ int dycore_init(
     int dynamics_split_steps,
     int config_monotonic, int config_scalar_advection,
     int config_apply_lbcs, int config_mix_full,
-    int config_iau, int gpu_aware_comm);
+    int config_iau, int gpu_aware_comm,
+    /* MPI */
+    int mpi_comm_fortran);
 
 /**
  * @brief Advance the dycore by one timestep.

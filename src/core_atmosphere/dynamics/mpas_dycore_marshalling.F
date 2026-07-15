@@ -114,6 +114,9 @@ module mpas_dycore_marshalling
       ! Return code from dycore_init
       integer :: ierr
 
+      ! MPI communicator handle
+      integer :: mpi_comm_handle
+
       ! Loop counter
       integer :: i
 
@@ -125,6 +128,9 @@ module mpas_dycore_marshalling
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', mesh)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'state', state)
       block_configs => domain % blocklist % configs
+
+      ! Get the MPI communicator from the domain's dminfo structure
+      mpi_comm_handle = domain % dminfo % comm
 
       !--------------------------------------------------------------------
       ! Extract dimensions
@@ -258,7 +264,8 @@ module mpas_dycore_marshalling
          scalars_tl1, scalars_tl2, &
          cfg_time_integration_order, cfg_number_of_sub_steps, cfg_dynamics_split_steps, &
          cfg_monotonic, cfg_scalar_advection, cfg_apply_lbcs, &
-         cfg_mix_full, cfg_iau, cfg_gpu_aware_comm)
+         cfg_mix_full, cfg_iau, cfg_gpu_aware_comm, &
+         mpi_comm_handle)
 
       if (ierr /= 0) then
          if (ierr == 1) then

@@ -109,7 +109,8 @@ TEST(DimensionValidationProperty, InvalidDimensionsReturnErrorCode2) {
         bufs.dptr(), bufs.dptr(),
         /* state TL2 */ bufs.dptr(), bufs.dptr(), bufs.dptr(),
         bufs.dptr(), bufs.dptr(),
-        /* config */ 3, 6, 1, 1, 1, 0, 0, 0, 0);
+        /* config */ 3, 6, 1, 1, 1, 0, 0, 0, 0,
+        /* mpi_comm_fortran */ 0);
 
     ASSERT_EQ(rc, 2)
         << "Iteration " << iter << ": dycore_init should return error code 2 "
@@ -157,7 +158,8 @@ TEST(DimensionValidationProperty, EachDimensionIndependentlyValidated) {
         bufs.dptr(), bufs.dptr(),
         bufs.dptr(), bufs.dptr(), bufs.dptr(),
         bufs.dptr(), bufs.dptr(),
-        3, 6, 1, 1, 1, 0, 0, 0, 0);
+        3, 6, 1, 1, 1, 0, 0, 0, 0,
+        /* mpi_comm_fortran */ 0);
 
     EXPECT_EQ(rc, 2)
         << "dycore_init should return 2 for invalid dimension: " << tc.description;
