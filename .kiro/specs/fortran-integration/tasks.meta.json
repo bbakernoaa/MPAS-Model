@@ -1,0 +1,459 @@
+{
+  "pbtResults": {
+    "1.2 Write property tests for index remapping (Property 2)": {
+      "status": "passed",
+      "lastRunTimestamp": 1784080367795
+    },
+    "4.2 Write property test for dimension validation (Property 8)": {
+      "status": "passed",
+      "lastRunTimestamp": 1784080814906
+    },
+    "4.3 Write property test for FFI value passthrough (Property 1)": {
+      "status": "passed",
+      "lastRunTimestamp": 1784082286666
+    },
+    "8.3 Write property test for L-infinity norm computation (Property 6)": {
+      "status": "passed",
+      "lastRunTimestamp": 1784102042920
+    },
+    "8.4 Write property test for parity threshold decision (Property 7)": {
+      "status": "passed",
+      "lastRunTimestamp": 1784102371830
+    }
+  },
+  "executionHistory": {
+    "1.1 Implement `mpas_dycore_marshalling.F` with pool extraction and index remapping": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078831785
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078840869
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784079131183
+      }
+    ],
+    "1.2 Write property tests for index remapping (Property 2)": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078831860
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784079140675
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190223
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080199199
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080383539
+      }
+    ],
+    "2.1 Add `config_use_cpp_dycore` namelist variable and runtime switch logic": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078831952
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784079141440
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190302
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080200011
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080384280
+      }
+    ],
+    "3. Checkpoint - Verify marshalling and runtime switch compile": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832008
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190363
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784102395109
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784102838295
+      }
+    ],
+    "4.1 Add error return code to `dycore_init` and dimension validation": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832061
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784079142189
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190445
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080200704
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080384933
+      }
+    ],
+    "4.2 Write property test for dimension validation (Property 8)": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832111
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190508
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080393326
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082304881
+      }
+    ],
+    "4.3 Write property test for FFI value passthrough (Property 1)": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832154
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190573
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080393840
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082305459
+      }
+    ],
+    "5.1 Create `cpp_dycore.mk` Makefile include for the MPAS build system": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832200
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078841739
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784079132338
+      }
+    ],
+    "5.2 Integrate `cpp_dycore.mk` into the MPAS top-level Makefile": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832244
+      },
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784079143052
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190621
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080201526
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080385701
+      }
+    ],
+    "6. Checkpoint - Verify full build with and without C++ dycore": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832324
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190670
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784102844913
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784104714580
+      }
+    ],
+    "7.1 Create a Docker build stage that compiles MPAS with `USE_CPP_DYCORE=true`": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832384
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190777
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082313886
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082402761
+      }
+    ],
+    "8.1 Create the JW baroclinic wave comparison script": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832427
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190856
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082407580
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784101955696
+      }
+    ],
+    "8.2 Create the Python/NCO comparison utility for field parity checking": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832472
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190902
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082408395
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784101954912
+      }
+    ],
+    "8.3 Write property test for L-infinity norm computation (Property 6)": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832550
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190949
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784101959779
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784102387282
+      }
+    ],
+    "8.4 Write property test for parity threshold decision (Property 7)": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832610
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080190990
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784101960472
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784102387962
+      }
+    ],
+    "9.1 Add compile-time and runtime guards for backward compatibility": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832658
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080191039
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080394602
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082306367
+      }
+    ],
+    "10. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "a68cec50-ffbd-4768-a74f-7a77c739fb47",
+        "chatSessionId": "sess_8fb206d2-be31-44ea-a77d-623a03afeb6e",
+        "timestamp": 1784078832704
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080191087
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784104718266
+      },
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784105218281
+      }
+    ],
+    "1. Create the Fortran marshalling module": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080383600
+      }
+    ],
+    "2. Implement the runtime switch in the time integration driver": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080384321
+      }
+    ],
+    "5. Build system integration": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784080385751
+      }
+    ],
+    "4. Extend the C API with error handling": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082305548
+      }
+    ],
+    "9. Wire backward compatibility safeguards": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082306438
+      }
+    ],
+    "7. Create Dockerfile for Fortran integration testing": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784082402846
+      }
+    ],
+    "8. Implement the validation test": [
+      {
+        "executionId": "9ffb7aee-2c67-4454-aee3-7858e2b6d558",
+        "chatSessionId": "sess_9e16d12d-0b35-49f3-8d65-0c78b31049d2",
+        "timestamp": 1784102388007
+      }
+    ]
+  }
+}

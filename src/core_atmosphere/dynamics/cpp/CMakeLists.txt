@@ -35,6 +35,7 @@ add_library(dycore_cpp STATIC
     src/mpas_dycore.cpp
     src/dycore_c_api.cpp
 )
+set_target_properties(dycore_cpp PROPERTIES OUTPUT_NAME mpas_dycore_cpp)
 add_library(MPAS::dycore_cpp ALIAS dycore_cpp)
 
 target_include_directories(dycore_cpp
