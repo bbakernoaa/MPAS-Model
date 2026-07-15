@@ -685,6 +685,14 @@ CPPINCLUDES =
 FCINCLUDES =
 LIBS =
 
+# ---------------------------------------------------------------------------
+# Optional C++/Kokkos dynamical-core integration (fortran-integration spec).
+# Opt-in with: make ... USE_CPP_DYCORE=true
+# When USE_CPP_DYCORE is unset or false, this include is a no-op and no C++
+# compiler or Kokkos installation is required.
+# Requirements: 5.4, 5.6, 7.2
+-include src/core_atmosphere/dynamics/cpp_dycore.mk
+
 export MPAS_ESMF ?= embedded
 ifeq "$(MPAS_ESMF)" "external"
   ifeq ($(wildcard $(ESMFMKFILE)), )
@@ -1536,7 +1544,7 @@ else
 SCOTCH_MESSAGE = "MPAS was NOT linked with the Scotch graph partitioning library."
 endif
 
-mpas_main: $(MAIN_DEPS)
+mpas_main: $(CPP_DYCORE_LIB) $(MAIN_DEPS)
 	cd src; $(MAKE) FC="$(FC)" \
                  CC="$(CC)" \
                  CXX="$(CXX)" \
@@ -1551,6 +1559,7 @@ mpas_main: $(MAIN_DEPS)
                  CPP="$(CPP)" \
                  CPPFLAGS="$(CPPFLAGS)" \
                  LIBS="$(LIBS)" \
+                 CPP_DYCORE_LINK="$(CPP_DYCORE_LINK)" \
                  CPPINCLUDES="$(CPPINCLUDES)" \
                  FCINCLUDES="$(FCINCLUDES)" \
                  CORE="$(CORE)"\

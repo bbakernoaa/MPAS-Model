@@ -1,0 +1,18 @@
+#ifndef MPAS_DYCORE_SCALAR_HPP
+#define MPAS_DYCORE_SCALAR_HPP
+
+namespace mpas {
+namespace dycore {
+
+#cmakedefine01 MPAS_DOUBLE_PRECISION
+
+#if MPAS_DOUBLE_PRECISION
+using Scalar = double;
+#else
+using Scalar = float;
+#endif
+
+} // namespace dycore
+} // namespace mpas
+
+#endif // MPAS_DYCORE_SCALAR_HPP

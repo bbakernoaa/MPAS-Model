@@ -369,6 +369,16 @@ target_compile_definitions(core_atmosphere PRIVATE ${CORE_ATMOSPHERE_COMPILE_DEF
 set_MPAS_DEBUG_flag(core_atmosphere)
 mpas_core_target(CORE atmosphere TARGET core_atmosphere INCLUDES ${ATMOSPHERE_CORE_INCLUDES})
 
+## C++/Kokkos dynamical-core port (Dycore_Port).
+# Opt-in via -DMPAS_DYCORE_CPP=ON. Builds the C++ dycore target with Kokkos,
+# KokkosKernels, and the Halo_Library, then links it into core_atmosphere so it
+# is driven from the existing atmosphere core (Requirements 13.3, 13.6, 1.6).
+if (MPAS_DYCORE_CPP)
+    add_subdirectory(dynamics/cpp)
+    target_link_libraries(core_atmosphere PUBLIC MPAS::dycore_cpp)
+    target_compile_definitions(core_atmosphere PRIVATE MPAS_DYCORE_CPP)
+endif ()
+
 #Get physics_wrf tables from MPAS-Data
 include(FetchContent)
 if (${PROJECT_VERSION} VERSION_GREATER_EQUAL 7.0)

@@ -123,3 +123,5 @@ compile_commands.json
 # ------------------------------------------------------------------
 !src/core_atmosphere/dynamics/cpp/**
 !helm-project/**
+
+build*/

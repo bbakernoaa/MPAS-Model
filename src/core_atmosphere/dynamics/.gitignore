@@ -1,1 +1,4 @@
 *.f90
+
+# C++ dycore (Dycore_Port) out-of-source CMake build tree
+cpp/build/
