@@ -59,6 +59,96 @@ static std::unique_ptr<DycoreContext> g_context;
 
 }  // anonymous namespace
 
+extern "C" {
+  // We use __attribute__((weak)) to provide a safe mock implementation for C++-only unit tests
+  // (which don't link against the full Fortran marshalling library).
+  // The Fortran-defined mpas_cpp_get_pointer symbol will override this at runtime in full builds.
+  #ifdef __GNUC__
+  __attribute__((weak))
+  #endif
+  void* mpas_cpp_get_pointer(const char* pool_name, const char* var_name, int dim_num, int time_level) {
+    static std::vector<double> s_mock_mem(100000, 1.0);
+    (void)pool_name;
+    (void)var_name;
+    (void)dim_num;
+    (void)time_level;
+    return s_mock_mem.data();
+  }
+}
+
+struct DynFieldMetadata {
+  std::string var_name;
+  std::string pool_name;
+  int dimensions;       
+  int time_levels;      
+  std::string extent_x; 
+  std::string extent_y; 
+};
+
+const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
+  {"exner",         "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"exner_base",    "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"pressure_p",    "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"rho_p",         "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_base",   "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_p",      "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"ru",            "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"rw",            "diagnostics", 2, 0, "nVertLevels+1", "nCells"},
+  {"h_edge",        "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"v",             "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"vorticity",     "diagnostics", 2, 0, "nVertLevels",   "nVertices"},
+  {"divergence",    "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"ke",            "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"pv_edge",       "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"pv_vertex",     "diagnostics", 2, 0, "nVertLevels",   "nVertices"},
+  {"pv_cell",       "diagnostics", 2, 0, "nVertLevels",   "nCells"},
+  {"gradPVn",       "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"gradPVt",       "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"tend_u",        "tend",        2, 0, "nVertLevels",   "nEdges"},
+  {"tend_w",        "tend",        2, 0, "nVertLevels+1", "nCells"},
+  {"tend_theta_m",  "tend",        2, 0, "nVertLevels",   "nCells"},
+  {"tend_rho",      "tend",        2, 0, "nVertLevels",   "nCells"},
+  {"ruAvg",         "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
+  {"wwAvg",         "diagnostics", 2, 0, "nVertLevels+1", "nCells"}
+};
+
+int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels) {
+  if (extent_name == "nCells")        return nCells;
+  if (extent_name == "nEdges")        return nEdges;
+  if (extent_name == "nVertices")     return nVertices;
+  if (extent_name == "nVertLevels")   return nVertLevels;
+  if (extent_name == "nVertLevels+1") return nVertLevels + 1;
+  throw std::runtime_error("C++ Dycore: Unknown extent: " + extent_name);
+}
+
+void wrap_all_diagnostic_fields(FieldStore& store, 
+                                std::vector<std::string>& prognostic_field_names,
+                                int nCells, int nEdges, int nVertices, int nVertLevels) {
+  for (const auto& meta : G_DIAGNOSTIC_FIELDS) {
+    int n_inner = resolve_extent(meta.extent_x, nCells, nEdges, nVertices, nVertLevels);
+    int n_elem  = resolve_extent(meta.extent_y, nCells, nEdges, nVertices, nVertLevels);
+
+    if (meta.time_levels > 0) {
+      std::vector<Scalar*> ptrs;
+      for (int tl = 1; tl <= meta.time_levels; ++tl) {
+        void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.var_name.c_str(), meta.dimensions, tl);
+        if (!ptr) {
+          throw std::runtime_error("C++ Dycore: Missing time-leveled field '" + meta.var_name + "' (TL=" + std::to_string(tl) + ") in pool '" + meta.pool_name + "'");
+        }
+        ptrs.push_back(static_cast<Scalar*>(ptr));
+      }
+      store.wrap(meta.var_name, ptrs, n_inner, n_elem);
+    } else {
+      void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.var_name.c_str(), meta.dimensions, 0);
+      if (!ptr) {
+        throw std::runtime_error("C++ Dycore: Missing field '" + meta.var_name + "' in pool '" + meta.pool_name + "'");
+      }
+      store.wrap(meta.var_name, static_cast<Scalar*>(ptr), n_inner, n_elem);
+    }
+    prognostic_field_names.push_back(meta.var_name);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // C API Implementation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +298,9 @@ int dycore_init(
     store.wrap("scalars", sc_ptrs, num_scalars * nVertLevels, nCells);
     names.push_back("scalars");
   }
+
+  // Wrap all dynamic diagnostics and tendency fields from MPAS pools
+  wrap_all_diagnostic_fields(store, names, nCells, nEdges, nVertices, nVertLevels);
 
   return 0;  // Success
 }
