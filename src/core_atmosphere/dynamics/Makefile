@@ -34,6 +34,11 @@ all: $(OBJS) dycore_cpp
 
 mpas_atm_time_integration.o: mpas_atm_boundaries.o mpas_atm_iau.o mpas_atm_dissipation_models.o
 
+# When the C++ dycore is enabled, time_integration uses mpas_dycore_marshalling
+ifneq (,$(findstring MPAS_CPP_DYCORE,$(CPPFLAGS)))
+mpas_atm_time_integration.o: mpas_dycore_marshalling.o
+endif
+
 mpas_atm_boundaries.o:
 
 # Explicit rule to compile the Fortran shim (dycore_fortran_shim.F90) into
