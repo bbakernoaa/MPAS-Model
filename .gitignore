@@ -61,3 +61,65 @@ stream_list.*
 *.i90
 
 src/core_*/inc
+
+# ------------------------------------------------------------------
+# C / C++ build artifacts
+# ------------------------------------------------------------------
+# Object / dependency files (*.o is already covered above)
+*.obj
+*.d
+*.d.*
+
+# Shared / dynamic libraries
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Static libraries / import libs (*.a is already covered above)
+*.lib
+
+# Libtool intermediates
+*.lo
+*.la
+*.slo
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Windows executables and macOS debug symbol bundles
+*.exe
+*.dSYM/
+
+# ------------------------------------------------------------------
+# Fortran build artifacts (*.mod is already covered above)
+# ------------------------------------------------------------------
+# Submodule interface files emitted by modern Fortran compilers
+*.smod
+
+# ------------------------------------------------------------------
+# CMake out-of-source build artifacts
+# NOTE: *.cmake and Makefile are intentionally NOT ignored here since
+#       this repo tracks hand-written .cmake modules and Makefiles.
+# ------------------------------------------------------------------
+build/
+Testing/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+CMakeUserPresets.json
+compile_commands.json
+
+# ------------------------------------------------------------------
+# OS / editor cruft
+# ------------------------------------------------------------------
+.DS_Store
+
+# ------------------------------------------------------------------
+# C++ dycore (Dycore_Port) exceptions
+# ------------------------------------------------------------------
+!src/core_atmosphere/dynamics/cpp/**
+!helm-project/**

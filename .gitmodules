@@ -1,0 +1,3 @@
+[submodule "helm-project"]
+	path = helm-project
+	url = https://github.com/bbakernoaa/helm-project
