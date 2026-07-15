@@ -32,6 +32,9 @@ module mpas_dycore_marshalling
    public :: mpas_dycore_call_init
    public :: mpas_dycore_call_timestep
    public :: mpas_dycore_call_finalize
+   public :: mpas_cpp_get_pointer
+
+   type (domain_type), pointer, save :: global_domain => null()
 
    !-----------------------------------------------------------------------
    ! Module-level buffers for 0-based connectivity arrays.
@@ -59,7 +62,7 @@ module mpas_dycore_marshalling
 
       implicit none
 
-      type (domain_type), intent(inout) :: domain
+      type (domain_type), intent(inout), target :: domain
 
       ! Pool pointers
       type (mpas_pool_type), pointer :: mesh
@@ -119,6 +122,8 @@ module mpas_dycore_marshalling
 
       ! Loop counter
       integer :: i
+
+      global_domain => domain
 
       !--------------------------------------------------------------------
       ! Get sub-pools from domain
@@ -326,8 +331,70 @@ module mpas_dycore_marshalling
       if (allocated(verticesOnEdge_0based))  deallocate(verticesOnEdge_0based)
       if (allocated(nEdgesOnCell_0based))    deallocate(nEdgesOnCell_0based)
 
+      global_domain => null()
+
    end subroutine mpas_dycore_call_finalize
 
-end module mpas_dycore_marshalling
+
+   !***********************************************************************
+   !> @brief Dynamically look up and return a C pointer to variables in MPAS pools.
+   !>
+   !> Resolves 1D, 2D, and 3D variables from subpools dynamically using
+   !> the global_domain cached during initialization.
+   !***********************************************************************
+   function mpas_cpp_get_pointer(pool_name_c, var_name_c, dim_num, time_level) &
+       result(cptr) bind(C, name='mpas_cpp_get_pointer')
+     use iso_c_binding, only : c_char, c_int, c_ptr, c_null_ptr, c_loc
+     use mpas_pool_routines, only : mpas_pool_get_subpool, mpas_pool_get_array
+     use mpas_c_interfacing, only : mpas_c_to_f_string
+     implicit none
+
+     character(kind=c_char), intent(in) :: pool_name_c(*)
+     character(kind=c_char), intent(in) :: var_name_c(*)
+     integer(c_int), value :: dim_num
+     integer(c_int), value :: time_level
+     type(c_ptr) :: cptr
+
+     type(mpas_pool_type), pointer :: pool
+     character(len=StrKIND) :: pool_name, var_name
+     real(kind=RKIND), dimension(:), pointer :: arr1d
+     real(kind=RKIND), dimension(:,:), pointer :: arr2d
+     real(kind=RKIND), dimension(:,:,:), pointer :: arr3d
+
+     cptr = c_null_ptr
+     if (.not. associated(global_domain)) return
+
+     call mpas_c_to_f_string(pool_name_c, pool_name)
+     call mpas_c_to_f_string(var_name_c, var_name)
+
+     nullify(pool)
+     call mpas_pool_get_subpool(global_domain % blocklist % structs, trim(pool_name), pool)
+     if (.not. associated(pool)) return
+
+     if (dim_num == 1) then
+        if (time_level > 0) then
+           call mpas_pool_get_array(pool, trim(var_name), arr1d, time_level)
+        else
+           call mpas_pool_get_array(pool, trim(var_name), arr1d)
+        end if
+        if (associated(arr1d)) cptr = c_loc(arr1d(1))
+     else if (dim_num == 2) then
+        if (time_level > 0) then
+           call mpas_pool_get_array(pool, trim(var_name), arr2d, time_level)
+        else
+           call mpas_pool_get_array(pool, trim(var_name), arr2d)
+        end if
+        if (associated(arr2d)) cptr = c_loc(arr2d(1,1))
+     else if (dim_num == 3) then
+        if (time_level > 0) then
+           call mpas_pool_get_array(pool, trim(var_name), arr3d, time_level)
+        else
+           call mpas_pool_get_array(pool, trim(var_name), arr3d)
+        end if
+        if (associated(arr3d)) cptr = c_loc(arr3d(1,1,1))
+     end if
+   end function mpas_cpp_get_pointer
+
+   end module mpas_dycore_marshalling
 
 #endif /* MPAS_CPP_DYCORE */
