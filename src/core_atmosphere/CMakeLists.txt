@@ -318,6 +318,11 @@ set(ATMOSPHERE_CORE_DYNAMICS_SOURCES
     mpas_atm_dissipation_models.F
     mpas_atm_iau.F
     mpas_atm_time_integration.F)
+if (MPAS_DYCORE_CPP)
+    list(APPEND ATMOSPHERE_CORE_DYNAMICS_SOURCES
+        cpp/src/dycore_fortran_shim.F90
+        mpas_dycore_marshalling.F)
+endif ()
 list(TRANSFORM ATMOSPHERE_CORE_DYNAMICS_SOURCES PREPEND dynamics/)
 
 # utils/
@@ -376,7 +381,7 @@ mpas_core_target(CORE atmosphere TARGET core_atmosphere INCLUDES ${ATMOSPHERE_CO
 if (MPAS_DYCORE_CPP)
     add_subdirectory(dynamics/cpp)
     target_link_libraries(core_atmosphere PRIVATE MPAS::dycore_cpp)
-    target_compile_definitions(core_atmosphere PRIVATE MPAS_DYCORE_CPP)
+    target_compile_definitions(core_atmosphere PRIVATE MPAS_DYCORE_CPP MPAS_CPP_DYCORE)
 endif ()
 
 #Get physics_wrf tables from MPAS-Data

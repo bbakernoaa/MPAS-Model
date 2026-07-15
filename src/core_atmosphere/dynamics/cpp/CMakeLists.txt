@@ -8,6 +8,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if (CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM" OR CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+    add_compile_options(-fp-model=precise)
+endif ()
+
+
 # Options
 option(MPAS_DOUBLE_PRECISION "Use double precision for Scalar (RKIND)" ON)
 option(MPAS_PHYSICS_ENABLED "Include physics halo groups (physics:blten, physics:cuten)" OFF)
@@ -35,7 +40,10 @@ add_library(dycore_cpp STATIC
     src/mpas_dycore.cpp
     src/dycore_c_api.cpp
 )
-set_target_properties(dycore_cpp PROPERTIES OUTPUT_NAME mpas_dycore_cpp)
+set_target_properties(dycore_cpp PROPERTIES
+    OUTPUT_NAME mpas_dycore_cpp
+    POSITION_INDEPENDENT_CODE ON
+)
 add_library(MPAS::dycore_cpp ALIAS dycore_cpp)
 
 target_include_directories(dycore_cpp

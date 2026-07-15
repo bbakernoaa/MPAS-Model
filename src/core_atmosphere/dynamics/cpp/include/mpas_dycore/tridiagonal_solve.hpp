@@ -15,6 +15,10 @@
 /// (Requirement 2.2). This matches the Fortran+OpenACC structure where
 /// `!$acc loop seq` is used for the forward and backward sweeps.
 ///
+/// To prevent compiler auto-vectorization and register-caching dependency bugs
+/// under high optimization levels (-O3), the vertical column is copied to a
+/// thread-local stack array where the Thomas recurrence sweeps are executed.
+///
 /// Requirements: 4.3, 4.5, 2.2
 
 #include "mpas_dycore/scalar.hpp"
@@ -99,64 +103,36 @@ void tridiagonal_vertical_solve(
       "tridiagonal_vertical_solve",
       Kokkos::RangePolicy<ExecSpace>(0, nCells),
       KOKKOS_LAMBDA(const int iCell) {
+        // Copy column to thread-local stack array to enforce exact sequential
+        // dependencies and prevent register-caching / vectorization bugs.
+        Scalar rw_local[256];
+        for (int k = 0; k <= nVertLevels; ++k) {
+          rw_local[k] = rw_p(k, iCell);
+        }
+
         // ──────────────────────────────────────────────────────────────────
         // Forward sweep of the Thomas algorithm (Requirement 4.3).
-        // Sweeps from level k=1 (0-based, which is Fortran k=2) up to
-        // k=nVertLevels-1 (0-based, Fortran nVertLevels).
-        //
-        // Fortran: do k=2,nVertLevels
-        //   rw_p(k,iCell) = (rw_p(k,iCell) - dts^2*a_tri(k,iCell)*rw_p(k-1,iCell))*alpha_tri(k,iCell)
-        //
-        // Note: In Fortran, rw_p is (nVertLevels+1, nCells) with indices 1..nVertLevels+1
-        //       a_tri, alpha_tri, gamma_tri are (nVertLevels, nCells) with indices 1..nVertLevels
-        //       The tridiagonal solve operates on levels 2..nVertLevels (Fortran)
-        //       which is levels 1..nVertLevels-1 in 0-based C++.
-        //
-        // In the C++ LayoutLeft views:
-        //   rw_p(k, iCell) with k in [0, nVertLevels] (size nVertLevels+1)
-        //   a_tri(k, iCell), alpha_tri(k, iCell), gamma_tri(k, iCell) with k in [0, nVertLevels-1]
         // ──────────────────────────────────────────────────────────────────
-
         for (int k = 1; k < nVertLevels; ++k) {
-          rw_p(k, iCell) = (rw_p(k, iCell) - dts2 * a_tri(k, iCell) * rw_p(k - 1, iCell))
+          rw_local[k] = (rw_local[k] - dts2 * a_tri(k, iCell) * rw_local[k - 1])
                            * alpha_tri(k, iCell);
         }
 
         // ──────────────────────────────────────────────────────────────────
         // Backward sweep (back-substitution).
-        // Fortran: do k=nVertLevels,1,-1 (but effectively k=nVertLevels-1,1,-1
-        //          since gamma_tri(nVertLevels,iCell) may be nonzero only for
-        //          k < nVertLevels, and rw_p(nVertLevels+1) = 0 boundary)
-        //   rw_p(k,iCell) = rw_p(k,iCell) - gamma_tri(k,iCell)*rw_p(k+1,iCell)
-        //
-        // In 0-based: k goes from nVertLevels-1 down to 0.
-        // Note: rw_p(nVertLevels, iCell) is the top boundary (k=nVertLevels+1
-        //       in Fortran) which should be 0, so the k=nVertLevels-1 iteration
-        //       uses rw_p(nVertLevels) which is the boundary value.
         // ──────────────────────────────────────────────────────────────────
-
         for (int k = nVertLevels - 1; k >= 0; --k) {
-          rw_p(k, iCell) = rw_p(k, iCell) - gamma_tri(k, iCell) * rw_p(k + 1, iCell);
+          rw_local[k] = rw_local[k] - gamma_tri(k, iCell) * rw_local[k + 1];
+        }
+
+        // Copy back to the view
+        for (int k = 0; k <= nVertLevels; ++k) {
+          rw_p(k, iCell) = rw_local[k];
         }
 
         // ──────────────────────────────────────────────────────────────────
         // Implicit Rayleigh damping in the absorbing layer (Requirement 4.5).
-        //
-        // Fortran (k=2..nVertLevels, i.e. 0-based k=1..nVertLevels-1):
-        //   rw_p(k,iCell) = (rw_p(k,iCell)
-        //       + (rw_save(k,iCell) - rw(k,iCell))
-        //       - dts*dss(k,iCell)
-        //         * (fzm(k)*zz(k,iCell) + fzp(k)*zz(k-1,iCell))
-        //         * (fzm(k)*rho_zz(k,iCell) + fzp(k)*rho_zz(k-1,iCell))
-        //         * w(k,iCell)
-        //     ) / (1.0 + dts*dss(k,iCell))
-        //     - (rw_save(k,iCell) - rw(k,iCell))
-        //
-        // Where dss is zero outside the absorbing layer, the expression
-        // reduces to an identity (division by 1, subtraction cancels addition).
-        // The formulation handles both cases uniformly.
         // ──────────────────────────────────────────────────────────────────
-
         for (int k = 1; k < nVertLevels; ++k) {
           const Scalar dss_k = dss(k, iCell);
           // Skip Rayleigh damping where dss is zero (optimization for
@@ -197,15 +173,26 @@ void tridiagonal_solve_no_damping(
       "tridiagonal_solve_no_damping",
       Kokkos::RangePolicy<ExecSpace>(0, nCells),
       KOKKOS_LAMBDA(const int iCell) {
+        // Copy column to thread-local stack array
+        Scalar rw_local[256];
+        for (int k = 0; k <= nVertLevels; ++k) {
+          rw_local[k] = rw_p(k, iCell);
+        }
+
         // Forward sweep
         for (int k = 1; k < nVertLevels; ++k) {
-          rw_p(k, iCell) = (rw_p(k, iCell) - dts2 * a_tri(k, iCell) * rw_p(k - 1, iCell))
+          rw_local[k] = (rw_local[k] - dts2 * a_tri(k, iCell) * rw_local[k - 1])
                            * alpha_tri(k, iCell);
         }
 
         // Backward sweep
         for (int k = nVertLevels - 1; k >= 0; --k) {
-          rw_p(k, iCell) = rw_p(k, iCell) - gamma_tri(k, iCell) * rw_p(k + 1, iCell);
+          rw_local[k] = rw_local[k] - gamma_tri(k, iCell) * rw_local[k + 1];
+        }
+
+        // Copy back to the view
+        for (int k = 0; k <= nVertLevels; ++k) {
+          rw_p(k, iCell) = rw_local[k];
         }
       });
 }

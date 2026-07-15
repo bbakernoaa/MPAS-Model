@@ -15,6 +15,10 @@
 
 set -euo pipefail
 
+# Set OpenMP thread limit to 1 per MPI rank to prevent thread oversubscription
+# and ensure absolute thread safety inside classic Intel MPI and SMIOL.
+export OMP_NUM_THREADS=1
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +46,7 @@ JW_GRAPH="${JW_GRAPH:-/work/test_data/jw_baroclinic_240km/x1.40962.graph.info.pa
 
 # Number of MPI ranks
 NPROCS="${NPROCS:-4}"
+MPI_RUN_CMD="${MPI_RUN_CMD:-mpirun --allow-run-as-root -np ${NPROCS}}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper functions
@@ -67,8 +72,7 @@ generate_namelist() {
 
     cat > "${output_dir}/namelist.atmosphere" << EOF
 &nhyd_model
-    config_init_case = 7
-    config_start_time = '0000-01-01_00:00:00'
+    config_start_time = '2010-10-23_00:00:00'
     config_run_duration = '1_00:00:00'
     config_dt = ${DT}
     config_time_integration_order = 2
@@ -139,7 +143,7 @@ run_mpas() {
     start_time=$(date +%s%N)
     (
         cd "${run_dir}"
-        mpirun --allow-run-as-root -np "${NPROCS}" "${ATMOSPHERE_MODEL}" 2>&1 | \
+        ${MPI_RUN_CMD} "${ATMOSPHERE_MODEL}" 2>&1 | \
             tee "${run_dir}/mpas.log"
     )
     local exit_code=${PIPESTATUS[0]}
