@@ -375,7 +375,7 @@ mpas_core_target(CORE atmosphere TARGET core_atmosphere INCLUDES ${ATMOSPHERE_CO
 # is driven from the existing atmosphere core (Requirements 13.3, 13.6, 1.6).
 if (MPAS_DYCORE_CPP)
     add_subdirectory(dynamics/cpp)
-    target_link_libraries(core_atmosphere PUBLIC MPAS::dycore_cpp)
+    target_link_libraries(core_atmosphere PRIVATE MPAS::dycore_cpp)
     target_compile_definitions(core_atmosphere PRIVATE MPAS_DYCORE_CPP)
 endif ()
 
