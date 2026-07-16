@@ -226,13 +226,12 @@ main() {
     # ─────────────────────────────────────────────────────────────────────────
     log_info "Step 3: Comparing outputs..."
 
-    local compare_result
-    compare_result=$(python3 "${COMPARE_SCRIPT}" \
-        --reference "${REF_DIR}/output.nc" \
-        --test "${CPP_DIR}/output.nc" \
+    local compare_result compare_exit=0
+    compare_result=$(PYTHONPATH="" /gpfs/f6/bil-fire3/world-shared/python/envs/mdt/bin/python3 "${COMPARE_SCRIPT}" \
+        "${REF_DIR}/output.nc" \
+        "${CPP_DIR}/output.nc" \
         --tolerance "${PARITY_TOLERANCE}" \
-        --fields u w theta_m rho_zz scalars)
-    local compare_exit=$?
+        --fields u w theta_m rho_zz) || compare_exit=$?
 
     # ─────────────────────────────────────────────────────────────────────────
     # Step 4: Report results

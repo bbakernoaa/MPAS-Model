@@ -16,6 +16,7 @@
 #include "mpas_dycore/field_store.hpp"
 #include "mpas_dycore/mesh_data.hpp"
 #include "mpas_dycore/scalar.hpp"
+#include "mpas_dycore/time_integrator_advance.hpp"
 
 #include <Kokkos_Core.hpp>
 
@@ -78,6 +79,7 @@ extern "C" {
 
 struct DynFieldMetadata {
   std::string var_name;
+  std::string fortran_name; // Name in MPAS Fortran pools (handles mismatches)
   std::string pool_name;
   int dimensions;       
   int time_levels;      
@@ -86,30 +88,30 @@ struct DynFieldMetadata {
 };
 
 const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
-  {"exner",         "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"exner_base",    "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"pressure_p",    "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"rho_p",         "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"rtheta_base",   "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"rtheta_p",      "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"ru",            "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"rw",            "diagnostics", 2, 0, "nVertLevels+1", "nCells"},
-  {"h_edge",        "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"v",             "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"vorticity",     "diagnostics", 2, 0, "nVertLevels",   "nVertices"},
-  {"divergence",    "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"ke",            "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"pv_edge",       "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"pv_vertex",     "diagnostics", 2, 0, "nVertLevels",   "nVertices"},
-  {"pv_cell",       "diagnostics", 2, 0, "nVertLevels",   "nCells"},
-  {"gradPVn",       "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"gradPVt",       "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"tend_u",        "tend",        2, 0, "nVertLevels",   "nEdges"},
-  {"tend_w",        "tend",        2, 0, "nVertLevels+1", "nCells"},
-  {"tend_theta_m",  "tend",        2, 0, "nVertLevels",   "nCells"},
-  {"tend_rho",      "tend",        2, 0, "nVertLevels",   "nCells"},
-  {"ruAvg",         "diagnostics", 2, 0, "nVertLevels",   "nEdges"},
-  {"wwAvg",         "diagnostics", 2, 0, "nVertLevels+1", "nCells"}
+  {"exner",         "exner",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"exner_base",    "exner_base",   "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"pressure_p",    "pressure_p",   "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"rho_p",         "rho_p",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_base",   "rtheta_base",  "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_p",      "rtheta_p",     "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"ru",            "ru",           "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"rw",            "rw",           "diag", 2, 0, "nVertLevels+1", "nCells"},
+  {"h_edge",        "rho_edge",     "diag", 2, 0, "nVertLevels",   "nEdges"}, // mismatch handled
+  {"v",             "v",            "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"vorticity",     "vorticity",    "diag", 2, 0, "nVertLevels",   "nVertices"},
+  {"divergence",    "divergence",   "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"ke",            "ke",           "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"pv_edge",       "pv_edge",      "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"pv_vertex",     "pv_vertex",    "diag", 2, 0, "nVertLevels",   "nVertices"},
+  {"pv_cell",       "pv_cell",      "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"gradPVn",       "gradPVn",      "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"gradPVt",       "gradPVt",      "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"tend_u",        "u",            "tend", 2, 0, "nVertLevels",   "nEdges"},
+  {"tend_w",        "w",            "tend", 2, 0, "nVertLevels+1", "nCells"},
+  {"tend_theta_m",  "theta_m",      "tend", 2, 0, "nVertLevels",   "nCells"}, // mismatch handled
+  {"tend_rho",      "rho_zz",       "tend", 2, 0, "nVertLevels",   "nCells"},
+  {"ruAvg",         "ruAvg",        "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"wwAvg",         "wwAvg",        "diag", 2, 0, "nVertLevels+1", "nCells"}
 };
 
 int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels) {
@@ -131,7 +133,7 @@ void wrap_all_diagnostic_fields(FieldStore& store,
     if (meta.time_levels > 0) {
       std::vector<Scalar*> ptrs;
       for (int tl = 1; tl <= meta.time_levels; ++tl) {
-        void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.var_name.c_str(), meta.dimensions, tl);
+        void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.fortran_name.c_str(), meta.dimensions, tl);
         if (!ptr) {
           throw std::runtime_error("C++ Dycore: Missing time-leveled field '" + meta.var_name + "' (TL=" + std::to_string(tl) + ") in pool '" + meta.pool_name + "'");
         }
@@ -139,7 +141,7 @@ void wrap_all_diagnostic_fields(FieldStore& store,
       }
       store.wrap(meta.var_name, ptrs, n_inner, n_elem);
     } else {
-      void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.var_name.c_str(), meta.dimensions, 0);
+      void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.fortran_name.c_str(), meta.dimensions, 0);
       if (!ptr) {
         throw std::runtime_error("C++ Dycore: Missing field '" + meta.var_name + "' in pool '" + meta.pool_name + "'");
       }
@@ -319,11 +321,26 @@ void dycore_timestep(double dt, int itimestep) {
   }
 
   // ── Execute dycore kernels ────────────────────────────────────────────────
-  // [Future: Time_Integrator::advance() will be called here once implemented.
-  //  For now this is a pass-through placeholder that satisfies the interop
-  //  contract: sync-in, (no-op kernels), sync-out.]
-  (void)dt;
-  (void)itimestep;
+  mpas::dycore::AdvanceDomain domain{
+      .config = g_context->config,
+      .nCells = g_context->dims.nCells,
+      .nEdges = g_context->dims.nEdges,
+      .nVertices = g_context->dims.nVertices,
+      .nVertLevels = g_context->dims.nVertLevels,
+      .nCellsSolve = g_context->dims.nCells,
+      .nEdgesSolve = g_context->dims.nEdges,
+      .num_scalars = g_context->num_scalars,
+      .maxEdges = g_context->dims.maxEdges,
+      .itimestep = itimestep,
+      .dt = dt,
+      .halo_manager = nullptr,
+      .scalar_advection_enabled = g_context->config.config_scalar_advection,
+      .split_dynamics_transport = false,
+      .field_store = &store
+  };
+
+  mpas::dycore::Time_Integrator_Advance integrator;
+  integrator.advance(domain);
 
   // ── Timestep exit: sync_to_host on all modified prognostic state fields (Req 13.8, 1.12) ─
   // All prognostic state fields are considered potentially modified by the dycore.

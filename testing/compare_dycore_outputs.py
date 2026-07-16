@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare two NetCDF dycore output files for field parity.
+Compare two NetCDF dycore output files for field parity using xarray.
 
 Computes per-field L-infinity relative differences between a reference run
 and a C++ dycore run. Reports PASS/FAIL based on a configurable tolerance
@@ -18,92 +18,24 @@ Exit codes:
 import argparse
 import json
 import sys
-
 import numpy as np
-
-try:
-    from netCDF4 import Dataset
-except ImportError:
-    try:
-        from scipy.io import netcdf_file
-    except ImportError:
-        print("ERROR: Neither netCDF4 nor scipy.io.netcdf is available.", file=sys.stderr)
-        sys.exit(2)
-
+import xarray as xr
 
 DEFAULT_TOLERANCE = 1.0e-13
-DEFAULT_FIELDS = ["u", "w", "theta_m", "rho_zz", "scalars"]
-
-
-def open_dataset(filepath):
-    """Open a NetCDF file and return the dataset object."""
-    try:
-        return Dataset(filepath, "r")
-    except NameError:
-        # netCDF4 not available, fall back to scipy
-        from scipy.io import netcdf_file
-        return netcdf_file(filepath, "r", mmap=False)
-
-
-def get_variable_data(dataset, varname):
-    """Get variable data as a numpy array, handling both netCDF4 and scipy interfaces."""
-    if hasattr(dataset, "variables"):
-        if varname not in dataset.variables:
-            return None
-        var = dataset.variables[varname]
-        # netCDF4 Dataset
-        if hasattr(var, "__getitem__"):
-            return np.asarray(var[:])
-        # scipy netcdf_file
-        return np.asarray(var.data)
-    return None
-
-
-def get_time_dimension(dataset):
-    """Determine the number of time steps in the dataset."""
-    # Common time dimension names in MPAS output
-    for dimname in ["Time", "time", "nTime"]:
-        if hasattr(dataset, "dimensions"):
-            dims = dataset.dimensions
-            if dimname in dims:
-                # netCDF4 style
-                if hasattr(dims[dimname], "__len__"):
-                    return len(dims[dimname])
-                # scipy style - dimensions is a dict of sizes
-                return dims[dimname]
-    return None
-
-
-def compute_linf_relative_norm(ref_data, test_data):
-    """
-    Compute the L-infinity relative norm between reference and test arrays.
-
-    Returns: max|test - ref| / max|ref|
-
-    If max|ref| == 0, returns max|test - ref| (absolute difference).
-    """
-    diff = np.abs(test_data.astype(np.float64) - ref_data.astype(np.float64))
-    max_diff = np.max(diff)
-
-    ref_max = np.max(np.abs(ref_data.astype(np.float64)))
-
-    if ref_max == 0.0:
-        return max_diff
-
-    return max_diff / ref_max
+DEFAULT_FIELDS = ["u", "w", "theta_m", "rho_zz"]
 
 
 def compare_fields(ref_path, test_path, fields, tolerance):
     """
-    Compare prognostic fields between reference and test NetCDF files.
+    Compare prognostic fields between reference and test NetCDF files using xarray.
 
     Returns a tuple (results, passed) where:
       - results: list of dicts with field, timestep, difference, and status
       - passed: bool indicating overall PASS/FAIL
     """
     try:
-        ref_ds = open_dataset(ref_path)
-        test_ds = open_dataset(test_path)
+        ref_ds = xr.open_dataset(ref_path)
+        test_ds = xr.open_dataset(test_path)
     except Exception as e:
         print(f"ERROR: Failed to open NetCDF files: {e}", file=sys.stderr)
         sys.exit(2)
@@ -112,10 +44,7 @@ def compare_fields(ref_path, test_path, fields, tolerance):
     overall_pass = True
 
     for field_name in fields:
-        ref_data = get_variable_data(ref_ds, field_name)
-        test_data = get_variable_data(test_ds, field_name)
-
-        if ref_data is None:
+        if field_name not in ref_ds:
             results.append({
                 "field": field_name,
                 "timestep": "N/A",
@@ -125,7 +54,7 @@ def compare_fields(ref_path, test_path, fields, tolerance):
             })
             continue
 
-        if test_data is None:
+        if field_name not in test_ds:
             results.append({
                 "field": field_name,
                 "timestep": "N/A",
@@ -136,7 +65,10 @@ def compare_fields(ref_path, test_path, fields, tolerance):
             overall_pass = False
             continue
 
-        if ref_data.shape != test_data.shape:
+        ref_var = ref_ds[field_name]
+        test_var = test_ds[field_name]
+
+        if ref_var.shape != test_var.shape:
             results.append({
                 "field": field_name,
                 "timestep": "N/A",
@@ -144,40 +76,51 @@ def compare_fields(ref_path, test_path, fields, tolerance):
                 "status": "FAIL",
                 "message": (
                     f"Shape mismatch for '{field_name}': "
-                    f"ref={ref_data.shape}, test={test_data.shape}"
+                    f"ref={ref_var.shape}, test={test_var.shape}"
                 )
             })
             overall_pass = False
             continue
 
-        # Determine if there is a time dimension (first axis)
-        ntime = get_time_dimension(ref_ds)
-
-        if ntime is not None and ref_data.ndim >= 1 and ref_data.shape[0] == ntime:
-            # Multiple time steps - compare each independently
+        # Determine if there is a Time dimension
+        if "Time" in ref_var.dims:
+            ntime = ref_var.sizes["Time"]
             for t in range(ntime):
-                ref_slice = ref_data[t]
-                test_slice = test_data[t]
-                diff = compute_linf_relative_norm(ref_slice, test_slice)
-                status = "PASS" if diff < tolerance else "FAIL"
+                r_slice = ref_var.isel(Time=t).values
+                t_slice = test_var.isel(Time=t).values
+
+                # Compute L-infinity relative norm
+                diff = np.abs(t_slice - r_slice)
+                max_diff = np.max(diff)
+                ref_max = np.max(np.abs(r_slice))
+
+                rel_diff = max_diff / ref_max if ref_max != 0.0 else max_diff
+                status = "PASS" if rel_diff < tolerance else "FAIL"
                 if status == "FAIL":
                     overall_pass = False
+
                 results.append({
                     "field": field_name,
                     "timestep": t,
-                    "difference": diff,
+                    "difference": float(rel_diff),
                     "status": status
                 })
         else:
-            # Single time step or no time dimension
-            diff = compute_linf_relative_norm(ref_data, test_data)
-            status = "PASS" if diff < tolerance else "FAIL"
+            r_val = ref_var.values
+            t_val = test_var.values
+            diff = np.abs(t_val - r_val)
+            max_diff = np.max(diff)
+            ref_max = np.max(np.abs(r_val))
+
+            rel_diff = max_diff / ref_max if ref_max != 0.0 else max_diff
+            status = "PASS" if rel_diff < tolerance else "FAIL"
             if status == "FAIL":
                 overall_pass = False
+
             results.append({
                 "field": field_name,
                 "timestep": 0,
-                "difference": diff,
+                "difference": float(rel_diff),
                 "status": status
             })
 

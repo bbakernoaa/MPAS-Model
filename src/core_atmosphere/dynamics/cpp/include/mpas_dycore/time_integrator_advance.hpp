@@ -76,6 +76,9 @@ struct AdvanceDomain {
   // -- Flags --
   bool scalar_advection_enabled = true;
   bool split_dynamics_transport = false;
+
+  // -- Field Store --
+  Field_Store<Scalar, Kokkos::DefaultExecutionSpace>* field_store = nullptr;
 };
 
 /// @brief SRK3 time integrator orchestration.
