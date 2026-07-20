@@ -40,7 +40,9 @@ TEST(DynamicBindingsTest, RegistryAndWrappingSucceeds) {
       dummy_state.data(), dummy_state.data(), dummy_state.data(), dummy_state.data(),
       dummy_state.data(), dummy_state.data(), dummy_state.data(), dummy_state.data(),
       dummy_state.data(), dummy_state.data(),
-      3, 4, 1, 0, 1, 0, 0, 0, 0, 0
+      3, 4, 1, 0, 1, 0, 0, 0, 0,
+      0.1, 120000.0, 0.0, 1,
+      0
   );
 
   EXPECT_EQ(rc, 0);

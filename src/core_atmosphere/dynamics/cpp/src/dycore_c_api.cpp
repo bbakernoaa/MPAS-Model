@@ -25,6 +25,30 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdarg>
+#include <cstdio>
+
+inline void cpp_debug_log(const char* format, ...) {
+  char buf[512];
+  va_list args;
+  va_start(args, format);
+  vsprintf(buf, format, args);
+  va_end(args);
+
+  int rank = 0;
+  int mpi_init = 0;
+  MPI_Initialized(&mpi_init);
+  if (mpi_init) {
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  }
+  char path[512];
+  sprintf(path, "/gpfs/f6/bil-fire3/scratch/Barry.Baker/models/MPAS-Model/build/jw_validation_run/cpp_run/cpp_debug_rank_%d.log", rank);
+  FILE* f = fopen(path, "a");
+  if (f) {
+    fprintf(f, "%s", buf);
+    fclose(f);
+  }
+}
 
 namespace {
 
@@ -52,6 +76,19 @@ struct DycoreContext {
   /// Names of prognostic state fields registered in state_store (for batch sync).
   std::vector<std::string> prognostic_field_names;
 
+  // -- Boundary specified zone masks --
+  Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> bdyMaskCell;
+  Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> bdyMaskEdge;
+
+  // -- Integer mesh connectivity --
+  Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> edgesOnEdge;
+  Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> edgesOnVertex;
+  Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> nEdgesOnEdge;
+  Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> advCellsForEdge;
+  Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> nAdvCellsForEdge;
+  Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> verticesOnCell;
+  Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> kiteForCell;
+
   DycoreContext(Config cfg) : config(std::move(cfg)) {}
 };
 
@@ -68,12 +105,26 @@ extern "C" {
   __attribute__((weak))
   #endif
   void* mpas_cpp_get_pointer(const char* pool_name, const char* var_name, int dim_num, int time_level) {
-    static std::vector<double> s_mock_mem(100000, 1.0);
-    (void)pool_name;
-    (void)var_name;
+    static std::unordered_map<std::string, std::vector<double>> s_mock_mem;
+    std::string key = std::string(pool_name) + ":" + var_name + ":" + std::to_string(time_level);
+    if (s_mock_mem.find(key) == s_mock_mem.end()) {
+      s_mock_mem[key] = std::vector<double>(50000, 1.0); // Unique dummy allocation per variable
+    }
     (void)dim_num;
-    (void)time_level;
-    return s_mock_mem.data();
+    return s_mock_mem[key].data();
+  }
+
+  #ifdef __GNUC__
+  __attribute__((weak))
+  #endif
+  void* mpas_cpp_get_int_pointer(const char* pool_name, const char* var_name, int dim_num, int time_level) {
+    static std::unordered_map<std::string, std::vector<int>> s_mock_int_mem;
+    std::string key = std::string(pool_name) + ":" + var_name + ":" + std::to_string(time_level);
+    if (s_mock_int_mem.find(key) == s_mock_int_mem.end()) {
+      s_mock_int_mem[key] = std::vector<int>(50000, 1); // Unique dummy allocation per variable
+    }
+    (void)dim_num;
+    return s_mock_int_mem[key].data();
   }
 }
 
@@ -110,25 +161,87 @@ const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
   {"tend_w",        "w",            "tend", 2, 0, "nVertLevels+1", "nCells"},
   {"tend_theta_m",  "theta_m",      "tend", 2, 0, "nVertLevels",   "nCells"}, // mismatch handled
   {"tend_rho",      "rho_zz",       "tend", 2, 0, "nVertLevels",   "nCells"},
+  {"tend_u_euler",     "u_euler",          "tend", 2, 0, "nVertLevels",   "nEdges"},
+  {"tend_w_euler",     "w_euler",          "tend", 2, 0, "nVertLevels+1", "nCells"},
+  {"tend_theta_euler", "theta_euler",      "tend", 2, 0, "nVertLevels",   "nCells"},
+  {"h_divergence",     "h_divergence",     "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"tend_ru_physics",     "tend_ru_physics",     "tend_physics", 2, 0, "nVertLevels",   "nEdges"},
+  {"tend_rho_physics",    "tend_rho_physics",    "tend_physics", 2, 0, "nVertLevels",   "nCells"},
+  {"tend_rtheta_physics", "tend_rtheta_physics", "tend_physics", 2, 0, "nVertLevels",   "nCells"},
   {"ruAvg",         "ruAvg",        "diag", 2, 0, "nVertLevels",   "nEdges"},
-  {"wwAvg",         "wwAvg",        "diag", 2, 0, "nVertLevels+1", "nCells"}
+  {"wwAvg",         "wwAvg",        "diag", 2, 0, "nVertLevels+1", "nCells"},
+  {"ru_p",             "ru_p",             "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"rw_p",             "rw_p",             "diag", 2, 0, "nVertLevels+1", "nCells"},
+  {"rho_pp",           "rho_pp",           "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_pp",        "rtheta_pp",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_pp_old",    "rtheta_pp_old",    "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"dss",              "dss",              "mesh", 2, 0, "nVertLevels",   "nCells"},
+  {"rw_base",          "rw_base",          "diag", 2, 0, "nVertLevels+1", "nCells"},
+  {"cqw",           "cqw",          "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"cqu",           "cqu",          "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"rdzu",          "rdzu",         "mesh", 1, 0, "nVertLevels",   "1"},
+  {"rdzw",          "rdzw",         "mesh", 1, 0, "nVertLevels",   "1"},
+  {"etp",           "etp",          "mesh", 1, 0, "nVertLevels",   "1"},
+  {"etm",           "etm",          "mesh", 1, 0, "nVertLevels",   "1"},
+  {"ewp",           "ewp",          "mesh", 1, 0, "nVertLevels+1", "1"},
+  {"ewm",           "ewm",          "mesh", 1, 0, "nVertLevels+1", "1"},
+  {"invDcEdge",     "invDcEdge",    "mesh", 1, 0, "nEdges",       "1"},
+  {"invDvEdge",     "invDvEdge",    "mesh", 1, 0, "nEdges",       "1"},
+  {"invAreaCell",   "invAreaCell",  "mesh", 1, 0, "nCells",       "1"},
+  {"dcEdge",        "dcEdge",       "mesh", 1, 0, "nEdges",       "1"},
+  {"invAreaTriangle", "invAreaTriangle", "mesh", 1, 0, "nVertices",   "1"},
+  {"fVertex",         "fVertex",         "mesh", 1, 0, "nVertices",   "1"},
+  {"kiteAreasOnVertex", "kiteAreasOnVertex", "mesh", 2, 0, "3",           "nVertices"},
+  {"edgesOnVertex_sign", "edgesOnVertex_sign", "mesh", 2, 0, "3",         "nVertices"},
+  {"rho_base",      "rho_base",     "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"cofrz",         "cofrz",        "diag", 1, 0, "nVertLevels",   "1"},
+  {"cofwr",         "cofwr",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"cofwz",         "cofwz",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"coftz",         "coftz",        "diag", 2, 0, "nVertLevels+1", "nCells"},
+  {"cofwt",         "cofwt",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"a_tri",         "a_tri",        "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"alpha_tri",     "alpha_tri",    "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"gamma_tri",     "gamma_tri",    "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"edgesOnCell_sign", "edgesOnCell_sign", "mesh", 2, 0, "maxEdges", "nCells"},
+  {"rho_p_save",    "rho_p_save",   "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"rtheta_p_save", "rtheta_p_save", "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"ru_save",       "ru_save",      "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"rw_save",       "rw_save",      "diag", 2, 0, "nVertLevels+1", "nCells"},
+  {"ur_cell",       "uReconstructZonal",      "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"vr_cell",       "uReconstructMeridional", "diag", 2, 0, "nVertLevels",   "nCells"},
+  {"fEdge",         "fEdge",        "mesh", 1, 0, "nEdges",       "1"},
+  {"weightsOnEdge", "weightsOnEdge", "mesh", 2, 0, "maxEdges2",   "nEdges"},
+  {"zxu",           "zxu",          "mesh", 2, 0, "nVertLevels",   "nEdges"},
+  {"latCell",       "latCell",      "mesh", 1, 0, "nCells",       "1"},
+  {"latEdge",       "latEdge",      "mesh", 1, 0, "nEdges",       "1"},
+  {"angleEdge",     "angleEdge",    "mesh", 1, 0, "nEdges",       "1"},
+  {"u_init",        "u_init",       "mesh", 1, 0, "nVertLevels",   "1"},
+  {"v_init",        "v_init",       "mesh", 1, 0, "nVertLevels",   "1"},
+  {"adv_coefs",     "adv_coefs",    "mesh", 2, 0, "15",           "nEdges"},
+  {"adv_coefs_3rd", "adv_coefs_3rd", "mesh", 2, 0, "15",           "nEdges"},
+  {"rt_diabatic_tend", "rt_diabatic_tend", "tend", 2, 0, "nVertLevels", "nCells"}
 };
 
-int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels) {
+int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges) {
   if (extent_name == "nCells")        return nCells;
   if (extent_name == "nEdges")        return nEdges;
   if (extent_name == "nVertices")     return nVertices;
   if (extent_name == "nVertLevels")   return nVertLevels;
   if (extent_name == "nVertLevels+1") return nVertLevels + 1;
+  if (extent_name == "maxEdges")      return maxEdges;
+  if (extent_name == "maxEdges2")     return 6;
+  if (extent_name == "15")            return 15;
+  if (extent_name == "3")             return 3;
+  if (extent_name == "1")             return 1;
   throw std::runtime_error("C++ Dycore: Unknown extent: " + extent_name);
 }
 
 void wrap_all_diagnostic_fields(FieldStore& store, 
                                 std::vector<std::string>& prognostic_field_names,
-                                int nCells, int nEdges, int nVertices, int nVertLevels) {
+                                int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges) {
   for (const auto& meta : G_DIAGNOSTIC_FIELDS) {
-    int n_inner = resolve_extent(meta.extent_x, nCells, nEdges, nVertices, nVertLevels);
-    int n_elem  = resolve_extent(meta.extent_y, nCells, nEdges, nVertices, nVertLevels);
+    int n_inner = resolve_extent(meta.extent_x, nCells, nEdges, nVertices, nVertLevels, maxEdges);
+    int n_elem  = resolve_extent(meta.extent_y, nCells, nEdges, nVertices, nVertLevels, maxEdges);
 
     if (meta.time_levels > 0) {
       std::vector<Scalar*> ptrs;
@@ -143,9 +256,17 @@ void wrap_all_diagnostic_fields(FieldStore& store,
     } else {
       void* ptr = mpas_cpp_get_pointer(meta.pool_name.c_str(), meta.fortran_name.c_str(), meta.dimensions, 0);
       if (!ptr) {
-        throw std::runtime_error("C++ Dycore: Missing field '" + meta.var_name + "' in pool '" + meta.pool_name + "'");
+        if (meta.pool_name == "tend_physics" || meta.var_name == "rw_base") {
+          // Physics disabled or rw_base, allocate locally as zero-filled View!
+          store.allocate(meta.var_name, n_inner, n_elem);
+          auto view = store.level(meta.var_name, 1);
+          Kokkos::deep_copy(view, Scalar(0.0));
+        } else {
+          throw std::runtime_error("C++ Dycore: Missing field '" + meta.var_name + "' in pool '" + meta.pool_name + "'");
+        }
+      } else {
+        store.wrap(meta.var_name, static_cast<Scalar*>(ptr), n_inner, n_elem);
       }
-      store.wrap(meta.var_name, static_cast<Scalar*>(ptr), n_inner, n_elem);
     }
     prognostic_field_names.push_back(meta.var_name);
   }
@@ -178,6 +299,8 @@ int dycore_init(
     int config_monotonic, int config_scalar_advection,
     int config_apply_lbcs, int config_mix_full,
     int config_iau, int gpu_aware_comm,
+    double config_smdiv, double config_len_disp,
+    double config_apvm_upwinding, int config_hollingsworth,
     /* MPI */
     int mpi_comm_fortran) {
 
@@ -225,6 +348,10 @@ int dycore_init(
       .config_iau(config_iau != 0)
       .gpu_aware_comm(gpu_aware_comm != 0)
       .halo_exchange_method("direct")
+      .config_smdiv(config_smdiv)
+      .config_len_disp(config_len_disp)
+      .config_apvm_upwinding(config_apvm_upwinding)
+      .config_hollingsworth(config_hollingsworth != 0)
       .build();
 
   // ── 3. Allocate the context ───────────────────────────────────────────────
@@ -301,8 +428,68 @@ int dycore_init(
     names.push_back("scalars");
   }
 
+  // Wrap boundary specified zone integer masks dynamically if they are present in the mesh pool
+  int* bdyMaskCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "bdyMaskCell", 1, 0));
+  int* bdyMaskEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "bdyMaskEdge", 1, 0));
+
+  if (bdyMaskCell_ptr) {
+    Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::HostSpace> host_cell(bdyMaskCell_ptr, nCells);
+    g_context->bdyMaskCell = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("bdyMaskCell", nCells);
+    Kokkos::deep_copy(g_context->bdyMaskCell, host_cell);
+  }
+  if (bdyMaskEdge_ptr) {
+    Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::HostSpace> host_edge(bdyMaskEdge_ptr, nEdges);
+    g_context->bdyMaskEdge = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("bdyMaskEdge", nEdges);
+    Kokkos::deep_copy(g_context->bdyMaskEdge, host_edge);
+  }
+
+  // Load integer mesh connectivity dynamically
+  int* edgesOnEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "edgesOnEdge", 2, 0));
+  int* edgesOnVertex_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "edgesOnVertex", 2, 0));
+  int* nEdgesOnEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "nEdgesOnEdge", 1, 0));
+  int* advCellsForEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "advCellsForEdge", 2, 0));
+  int* nAdvCellsForEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "nAdvCellsForEdge", 1, 0));
+  int* verticesOnCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "verticesOnCell", 2, 0));
+  int* kiteForCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "kiteForCell", 2, 0));
+
+  if (edgesOnEdge_ptr) {
+    Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(edgesOnEdge_ptr, 6, nEdges);
+    g_context->edgesOnEdge = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("edgesOnEdge", 6, nEdges);
+    Kokkos::deep_copy(g_context->edgesOnEdge, host);
+  }
+  if (edgesOnVertex_ptr) {
+    Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(edgesOnVertex_ptr, 3, nVertices);
+    g_context->edgesOnVertex = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("edgesOnVertex", 3, nVertices);
+    Kokkos::deep_copy(g_context->edgesOnVertex, host);
+  }
+  if (nEdgesOnEdge_ptr) {
+    Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::HostSpace> host(nEdgesOnEdge_ptr, nEdges);
+    g_context->nEdgesOnEdge = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("nEdgesOnEdge", nEdges);
+    Kokkos::deep_copy(g_context->nEdgesOnEdge, host);
+  }
+  if (advCellsForEdge_ptr) {
+    Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(advCellsForEdge_ptr, 15, nEdges);
+    g_context->advCellsForEdge = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("advCellsForEdge", 15, nEdges);
+    Kokkos::deep_copy(g_context->advCellsForEdge, host);
+  }
+  if (nAdvCellsForEdge_ptr) {
+    Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::HostSpace> host(nAdvCellsForEdge_ptr, nEdges);
+    g_context->nAdvCellsForEdge = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("nAdvCellsForEdge", nEdges);
+    Kokkos::deep_copy(g_context->nAdvCellsForEdge, host);
+  }
+  if (verticesOnCell_ptr) {
+    Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(verticesOnCell_ptr, maxEdges, nCells);
+    g_context->verticesOnCell = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("verticesOnCell", maxEdges, nCells);
+    Kokkos::deep_copy(g_context->verticesOnCell, host);
+  }
+  if (kiteForCell_ptr) {
+    Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(kiteForCell_ptr, maxEdges, nCells);
+    g_context->kiteForCell = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("kiteForCell", maxEdges, nCells);
+    Kokkos::deep_copy(g_context->kiteForCell, host);
+  }
+
   // Wrap all dynamic diagnostics and tendency fields from MPAS pools
-  wrap_all_diagnostic_fields(store, names, nCells, nEdges, nVertices, nVertLevels);
+  wrap_all_diagnostic_fields(store, names, nCells, nEdges, nVertices, nVertLevels, maxEdges);
 
   return 0;  // Success
 }
@@ -312,6 +499,8 @@ void dycore_timestep(double dt, int itimestep) {
     return;  // dycore_init was not called; no-op.
   }
 
+  cpp_debug_log("[CPP DEBUG] dycore_timestep called. itimestep=%d dt=%f\n", itimestep, dt);
+
   auto& store = g_context->state_store;
   const auto& names = g_context->prognostic_field_names;
 
@@ -319,6 +508,8 @@ void dycore_timestep(double dt, int itimestep) {
   for (const auto& name : names) {
     store.sync_to_device(name);
   }
+
+  cpp_debug_log("[CPP DEBUG] sync_to_device completed successfully.\n");
 
   // ── Execute dycore kernels ────────────────────────────────────────────────
   mpas::dycore::AdvanceDomain domain{
@@ -336,17 +527,45 @@ void dycore_timestep(double dt, int itimestep) {
       .halo_manager = nullptr,
       .scalar_advection_enabled = g_context->config.config_scalar_advection,
       .split_dynamics_transport = false,
-      .field_store = &store
+      .field_store = &store,
+      .cellsOnEdge = g_context->mesh.cellsOnEdge.view_device(),
+      .edgesOnCell = g_context->mesh.edgesOnCell.view_device(),
+      .nEdgesOnCell = g_context->mesh.nEdgesOnCell.view_device(),
+      .dvEdge = g_context->mesh.dvEdge.view_device(),
+      .areaCell = g_context->mesh.areaCell.view_device(),
+      .bdyMaskCell = g_context->bdyMaskCell,
+      .bdyMaskEdge = g_context->bdyMaskEdge,
+      .zz = g_context->mesh.zz.view_device(),
+      .zgrid = g_context->mesh.zgrid.view_device(),
+      .fzm = g_context->mesh.fzm.view_device(),
+      .fzp = g_context->mesh.fzp.view_device(),
+      .verticesOnEdge = g_context->mesh.verticesOnEdge.view_device(),
+      .edgesOnEdge = g_context->edgesOnEdge,
+      .edgesOnVertex = g_context->edgesOnVertex,
+      .nEdgesOnEdge = g_context->nEdgesOnEdge,
+      .advCellsForEdge = g_context->advCellsForEdge,
+      .nAdvCellsForEdge = g_context->nAdvCellsForEdge
   };
 
-  mpas::dycore::Time_Integrator_Advance integrator;
-  integrator.advance(domain);
+  cpp_debug_log("[CPP DEBUG] AdvanceDomain constructed. cells=%d zz_extent0=%d\n", domain.nCells, (int)domain.zz.extent(0));
+
+  try {
+    mpas::dycore::Time_Integrator_Advance integrator;
+    integrator.advance(domain);
+  } catch (const std::exception& e) {
+    cpp_debug_log("[CPP EXCEPTION] Caught exception inside dycore_timestep: %s\n", e.what());
+    throw;
+  }
+
+  cpp_debug_log("[CPP DEBUG] advance completed successfully.\n");
 
   // ── Timestep exit: sync_to_host on all modified prognostic state fields (Req 13.8, 1.12) ─
   // All prognostic state fields are considered potentially modified by the dycore.
   for (const auto& name : names) {
     store.sync_to_host(name);
   }
+
+  cpp_debug_log("[CPP DEBUG] sync_to_host completed successfully. Returning to Fortran.\n");
 }
 
 void dycore_finalize(void) {

@@ -135,6 +135,7 @@ TEST(FFIPassthrough, DimensionValidationRejectsCorruptedValues) {
         nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr,
         3, 6, 1, 1, 1, 0, 0, 0, 0,
+        0.1, 120000.0, 0.0, 1,
         /* mpi_comm_fortran */ 0);
 
     // The C API validates dimensions FIRST (before null checks).
@@ -185,6 +186,7 @@ TEST(FFIPassthrough, ValidDimensionsAcceptedByValidation) {
         nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr,
         3, 6, 1, 1, 1, 0, 0, 0, 0,
+        0.1, 120000.0, 0.0, 1,
         /* mpi_comm_fortran */ 0);
 
     // Should pass dimension validation (not return 2).
@@ -262,6 +264,7 @@ TEST(FFIPassthrough, ConfigScalarsPassThroughFFI) {
         config_monotonic, config_scalar_advection,
         config_apply_lbcs, config_mix_full,
         config_iau, gpu_aware_comm,
+        0.1, 120000.0, 0.0, 1,
         /* mpi_comm_fortran */ 0);
 
     // Should pass dimension validation but fail on null pointers.
@@ -352,6 +355,7 @@ TEST_F(FFIPassthroughLifecycle, FullInitFinalizeWithRandomScalars) {
       config_monotonic, config_scalar_advection,
       config_apply_lbcs, config_mix_full,
       config_iau, gpu_aware_comm,
+      0.1, 120000.0, 0.0, 1,
       /* mpi_comm_fortran */ 0);
 
   ASSERT_EQ(rc, 0)

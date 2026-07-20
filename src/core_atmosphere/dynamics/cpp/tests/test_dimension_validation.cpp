@@ -110,6 +110,7 @@ TEST(DimensionValidationProperty, InvalidDimensionsReturnErrorCode2) {
         /* state TL2 */ bufs.dptr(), bufs.dptr(), bufs.dptr(),
         bufs.dptr(), bufs.dptr(),
         /* config */ 3, 6, 1, 1, 1, 0, 0, 0, 0,
+        0.1, 120000.0, 0.0, 1,
         /* mpi_comm_fortran */ 0);
 
     ASSERT_EQ(rc, 2)
@@ -159,6 +160,7 @@ TEST(DimensionValidationProperty, EachDimensionIndependentlyValidated) {
         bufs.dptr(), bufs.dptr(), bufs.dptr(),
         bufs.dptr(), bufs.dptr(),
         3, 6, 1, 1, 1, 0, 0, 0, 0,
+        0.1, 120000.0, 0.0, 1,
         /* mpi_comm_fortran */ 0);
 
     EXPECT_EQ(rc, 2)

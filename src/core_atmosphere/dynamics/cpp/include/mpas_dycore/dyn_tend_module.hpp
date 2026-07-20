@@ -13,6 +13,31 @@
 
 #include <Kokkos_Core.hpp>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <mpi.h>
+
+inline void dyn_debug_log(const char* format, ...) {
+  char buf[512];
+  va_list args;
+  va_start(args, format);
+  vsprintf(buf, format, args);
+  va_end(args);
+
+  int rank = 0;
+  int mpi_init = 0;
+  MPI_Initialized(&mpi_init);
+  if (mpi_init) {
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  }
+  char path[512];
+  sprintf(path, "/gpfs/f6/bil-fire3/scratch/Barry.Baker/models/MPAS-Model/build/jw_validation_run/cpp_run/cpp_debug_rank_%d.log", rank);
+  FILE* f = fopen(path, "a");
+  if (f) {
+    fprintf(f, "%s", buf);
+    fclose(f);
+  }
+}
 
 namespace mpas {
 namespace dycore {
@@ -322,6 +347,12 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   // On stage 1: zero the Euler (mixing) tendency cache (Req 6.5)
   // ════════════════════════════════════════════════════════════════════════════
   if (rk_step == 1) {
+    dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: zeroing tend_u_euler. data=%p shape=(%d, %d)\n",
+                  tend_u_euler.data(), (int)tend_u_euler.extent(0), (int)tend_u_euler.extent(1));
+    dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: tend_w_euler. data=%p shape=(%d, %d)\n",
+                  tend_w_euler.data(), (int)tend_w_euler.extent(0), (int)tend_w_euler.extent(1));
+    dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: tend_theta_euler. data=%p shape=(%d, %d)\n",
+                  tend_theta_euler.data(), (int)tend_theta_euler.extent(0), (int)tend_theta_euler.extent(1));
     Kokkos::parallel_for(
         "dyn_tend::zero_tend_u_euler",
         Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
@@ -336,6 +367,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   // Compute horizontal mass-flux divergence (Requirement 6.2)
   // h_divergence(k,iCell) = sum_edges[sign * dvEdge * ru(k,e)] * invAreaCell
   // ════════════════════════════════════════════════════════════════════════════
+  dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting h_divergence parallel_for...\n");
   Kokkos::parallel_for(
       "dyn_tend::h_divergence",
       Kokkos::RangePolicy<exec_space>(0, nCells),
@@ -348,6 +380,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
         const int ne = nEdgesOnCell_v(iCell);
         for (int i = 0; i < ne; ++i) {
           const int iEdge = edgesOnCell(i, iCell) - 1;
+          if (iEdge < 0 || iEdge >= nEdges) continue;
           const Scalar edge_sign = edgesOnCell_sign(i, iCell) * dvEdge(iEdge);
           for (int k = 0; k < nVertLevels; ++k) {
             h_divergence(k, iCell) += edge_sign * ru(k, iEdge);
@@ -370,6 +403,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   view2d dpdz("dpdz", nVertLevels, nCells);
 
   if (rk_step == 1) {
+    dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_rho_dpdz parallel_for...\n");
     const Scalar rgas = constants::rgas;
     const Scalar cp_val = constants::cp;
     const Scalar cv = cp_val - rgas;
@@ -399,12 +433,14 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   //           KE gradient, mass-flux-divergence drag,
   //           and curvature terms when enabled.
   // ════════════════════════════════════════════════════════════════════════════
+  dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_u parallel_for...\n");
   Kokkos::parallel_for(
       "dyn_tend::tend_u",
       Kokkos::RangePolicy<exec_space>(0, nEdges),
       KOKKOS_LAMBDA(const int iEdge) {
         const int cell1 = cellsOnEdge(0, iEdge) - 1;
         const int cell2 = cellsOnEdge(1, iEdge) - 1;
+        if (cell1 < 0 || cell1 >= nCells || cell2 < 0 || cell2 >= nCells) return;
 
         // ── Horizontal pressure gradient (stage 1, cached in tend_u_euler) ──
         if (rk_step == 1) {
@@ -483,6 +519,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
           Scalar q_k = Scalar(0.0);
           for (int j = 0; j < ne_on_edge; ++j) {
             const int eoe = edgesOnEdge(j, iEdge) - 1;
+            if (eoe < 0 || eoe >= nEdges) continue;
             const Scalar workpv = Scalar(0.5) *
                 (pv_edge(k, iEdge) + pv_edge(k, eoe));
             q_k += weightsOnEdge(j, iEdge) * u(k, eoe) * workpv;
@@ -491,6 +528,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
           // Perturbation Coriolis correction (constant-f approximation)
           for (int j = 0; j < ne_on_edge; ++j) {
             const int eoe = edgesOnEdge(j, iEdge) - 1;
+            if (eoe < 0 || eoe >= nEdges) continue;
             const Scalar reference_u = u_init(k) * Kokkos::cos(angleEdge(eoe))
                 - v_init(k) * Kokkos::sin(angleEdge(eoe));
             q_k -= weightsOnEdge(j, iEdge) * reference_u * fEdge(iEdge);
@@ -571,6 +609,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   // ════════════════════════════════════════════════════════════════════════════
 
   // Step 1: Horizontal advection of w
+  dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_w_hadv parallel_for...\n");
   Kokkos::parallel_for(
       "dyn_tend::tend_w_hadv",
       Kokkos::RangePolicy<exec_space>(0, nCells),
@@ -583,6 +622,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
         const int ne = nEdgesOnCell_v(iCell);
         for (int i = 0; i < ne; ++i) {
           const int iEdge = edgesOnCell(i, iCell) - 1;
+          if (iEdge < 0 || iEdge >= nEdges) continue;
           const Scalar edge_sign_dv =
               edgesOnCell_sign(i, iCell) * dvEdge(iEdge) * Scalar(0.5);
 
@@ -598,6 +638,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
             Scalar flux_arr_k = Scalar(0.0);
             for (int j = 0; j < nAdv; ++j) {
               const int iAdvCell = advCellsForEdge(j, iEdge) - 1;
+              if (iAdvCell < 0 || iAdvCell >= nCells) continue;
               const Scalar scalar_weight = adv_coefs(j, iEdge) +
                   Kokkos::copysign(Scalar(1.0), ru_edge_w_k) *
                   adv_coefs_3rd(j, iEdge);
@@ -613,6 +654,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
 
   // Step 2: Curvature terms for w (Requirement 6.4)
   if (curvature_enabled) {
+    dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_w_curvature parallel_for...\n");
     Kokkos::parallel_for(
         "dyn_tend::tend_w_curvature",
         Kokkos::RangePolicy<exec_space>(0, nCells),
@@ -634,6 +676,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   }
 
   // Step 3: Vertical advection of w + pressure gradient/buoyancy + area division
+  dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_w_vadv_pgf parallel_for...\n");
   Kokkos::parallel_for(
       "dyn_tend::tend_w_vadv_pgf",
       Kokkos::RangePolicy<exec_space>(0, nCells),
@@ -715,6 +758,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   // ════════════════════════════════════════════════════════════════════════════
 
   // Step 1: Horizontal advection of theta_m
+  dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_theta_hadv parallel_for...\n");
   Kokkos::parallel_for(
       "dyn_tend::tend_theta_hadv",
       Kokkos::RangePolicy<exec_space>(0, nCells),
@@ -727,12 +771,14 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
         const int ne = nEdgesOnCell_v(iCell);
         for (int i = 0; i < ne; ++i) {
           const int iEdge = edgesOnCell(i, iCell) - 1;
+          if (iEdge < 0 || iEdge >= nEdges) continue;
           const int nAdv = nAdvCellsForEdge(iEdge);
 
           for (int k = 0; k < nVertLevels; ++k) {
             Scalar flux_arr_k = Scalar(0.0);
             for (int j = 0; j < nAdv; ++j) {
               const int iAdvCell = advCellsForEdge(j, iEdge) - 1;
+              if (iAdvCell < 0 || iAdvCell >= nCells) continue;
               const Scalar scalar_weight = adv_coefs(j, iEdge) +
                   Kokkos::copysign(Scalar(1.0), ru(k, iEdge)) *
                   adv_coefs_3rd(j, iEdge);
@@ -747,8 +793,10 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
         if (rk_step > 1) {
           for (int i = 0; i < ne; ++i) {
             const int iEdge = edgesOnCell(i, iCell) - 1;
+            if (iEdge < 0 || iEdge >= nEdges) continue;
             const int c1 = cellsOnEdge(0, iEdge) - 1;
             const int c2 = cellsOnEdge(1, iEdge) - 1;
+            if (c1 < 0 || c1 >= nCells || c2 < 0 || c2 >= nCells) continue;
             for (int k = 0; k < nVertLevels; ++k) {
               const Scalar flux = edgesOnCell_sign(i, iCell) *
                   dvEdge(iEdge) *
@@ -762,6 +810,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   Kokkos::fence("dyn_tend::tend_theta_hadv_fence");
 
   // Step 2: Vertical advection + diabatic tendency + area division
+  dyn_debug_log("[CPP DEBUG] Dyn_Tend_Module: starting tend_theta_vadv parallel_for...\n");
   Kokkos::parallel_for(
       "dyn_tend::tend_theta_vadv",
       Kokkos::RangePolicy<exec_space>(0, nCells),

@@ -102,6 +102,8 @@ int dycore_init(
     int config_monotonic, int config_scalar_advection,
     int config_apply_lbcs, int config_mix_full,
     int config_iau, int gpu_aware_comm,
+    double config_smdiv, double config_len_disp,
+    double config_apvm_upwinding, int config_hollingsworth,
     /* MPI */
     int mpi_comm_fortran);
 

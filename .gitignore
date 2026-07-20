@@ -125,3 +125,8 @@ compile_commands.json
 !helm-project/**
 
 build*/
+
+*.pyc
+**/__pycache__
+.venv
+**/venv_val/

@@ -97,6 +97,11 @@ struct Config {
   /// Halo exchange method identifier (e.g. "direct", "grouped").
   /// Validated by Halo_Manager::validate_method (Req 11.10).
   const std::string halo_exchange_method;
+
+  const double config_smdiv;
+  const double config_len_disp;
+  const double config_apvm_upwinding;
+  const bool config_hollingsworth;
 };
 
 /// Builder helper for constructing a `Config` with named parameters.
@@ -139,6 +144,10 @@ public:
   ConfigBuilder& config_iau(bool v) { config_iau_ = v; return *this; }
   ConfigBuilder& gpu_aware_comm(bool v) { gpu_aware_comm_ = v; return *this; }
   ConfigBuilder& halo_exchange_method(std::string v) { halo_exchange_method_ = std::move(v); return *this; }
+  ConfigBuilder& config_smdiv(double v) { config_smdiv_ = v; return *this; }
+  ConfigBuilder& config_len_disp(double v) { config_len_disp_ = v; return *this; }
+  ConfigBuilder& config_apvm_upwinding(double v) { config_apvm_upwinding_ = v; return *this; }
+  ConfigBuilder& config_hollingsworth(bool v) { config_hollingsworth_ = v; return *this; }
 
   /// Construct an immutable `Config` from the accumulated values.
   [[nodiscard]] Config build() const {
@@ -156,6 +165,10 @@ public:
         .config_iau = config_iau_,
         .gpu_aware_comm = gpu_aware_comm_,
         .halo_exchange_method = halo_exchange_method_,
+        .config_smdiv = config_smdiv_,
+        .config_len_disp = config_len_disp_,
+        .config_apvm_upwinding = config_apvm_upwinding_,
+        .config_hollingsworth = config_hollingsworth_,
     };
   }
 
@@ -173,6 +186,10 @@ private:
   bool config_iau_ = false;
   bool gpu_aware_comm_ = false;
   std::string halo_exchange_method_ = "direct";
+  double config_smdiv_ = 0.1;
+  double config_len_disp_ = 120000.0;
+  double config_apvm_upwinding_ = 0.0;
+  bool config_hollingsworth_ = true;
 };
 
 }  // namespace dycore

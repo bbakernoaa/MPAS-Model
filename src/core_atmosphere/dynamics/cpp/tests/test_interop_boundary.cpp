@@ -122,6 +122,10 @@ struct TestBuffers {
         /* config_mix_full */ 0,
         /* config_iau */ 0,
         /* gpu_aware_comm */ 0,
+        /* config_smdiv */ 0.1,
+        /* config_len_disp */ 120000.0,
+        /* config_apvm_upwinding */ 0.0,
+        /* config_hollingsworth */ 1,
         /* mpi_comm_fortran */ 0);
   }
 };

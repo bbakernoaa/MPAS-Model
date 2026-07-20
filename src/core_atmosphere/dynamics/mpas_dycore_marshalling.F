@@ -33,6 +33,8 @@ module mpas_dycore_marshalling
    public :: mpas_dycore_call_timestep
    public :: mpas_dycore_call_finalize
    public :: mpas_cpp_get_pointer
+   public :: mpas_cpp_get_int_pointer
+   public :: global_domain
 
    type (domain_type), pointer, save :: global_domain => null()
 
@@ -99,9 +101,18 @@ module mpas_dycore_marshalling
       logical, pointer :: config_monotonic_ptr
       logical, pointer :: config_scalar_advection_ptr
       logical, pointer :: config_apply_lbcs_ptr
+      real (kind=RKIND), pointer :: config_smdiv_ptr
+      real (kind=RKIND), pointer :: config_len_disp_ptr
+      real (kind=RKIND), pointer :: config_apvm_upwinding_ptr
       logical, pointer :: config_mix_full_ptr
       logical, pointer :: config_gpu_aware_mpi_ptr
       character(len=StrKIND), pointer :: config_IAU_option_ptr
+
+      ! Real config values for C API
+      real (kind=RKIND) :: cfg_smdiv
+      real (kind=RKIND) :: cfg_len_disp
+      real (kind=RKIND) :: cfg_apvm_upwinding
+      integer :: cfg_hollingsworth
 
       ! Integer config values for C API
       integer :: cfg_time_integration_order
@@ -228,6 +239,9 @@ module mpas_dycore_marshalling
       call mpas_pool_get_config(block_configs, 'config_monotonic', config_monotonic_ptr)
       call mpas_pool_get_config(block_configs, 'config_scalar_advection', config_scalar_advection_ptr)
       call mpas_pool_get_config(block_configs, 'config_apply_lbcs', config_apply_lbcs_ptr)
+      call mpas_pool_get_config(block_configs, 'config_smdiv', config_smdiv_ptr)
+      call mpas_pool_get_config(block_configs, 'config_len_disp', config_len_disp_ptr)
+      call mpas_pool_get_config(block_configs, 'config_apvm_upwinding', config_apvm_upwinding_ptr)
       call mpas_pool_get_config(block_configs, 'config_mix_full', config_mix_full_ptr)
       call mpas_pool_get_config(block_configs, 'config_gpu_aware_mpi', config_gpu_aware_mpi_ptr)
       call mpas_pool_get_config(block_configs, 'config_IAU_option', config_IAU_option_ptr)
@@ -236,6 +250,10 @@ module mpas_dycore_marshalling
       cfg_time_integration_order = config_time_integration_order_ptr
       cfg_number_of_sub_steps = config_number_of_sub_steps_ptr
       cfg_dynamics_split_steps = config_dynamics_split_steps_ptr
+      cfg_smdiv = config_smdiv_ptr
+      cfg_len_disp = config_len_disp_ptr
+      cfg_apvm_upwinding = config_apvm_upwinding_ptr
+      cfg_hollingsworth = 1  ! parameter in reference model is always .true.
 
       ! Logical to integer mapping: .true. → 1, .false. → 0
       cfg_monotonic = 0
@@ -270,6 +288,7 @@ module mpas_dycore_marshalling
          cfg_time_integration_order, cfg_number_of_sub_steps, cfg_dynamics_split_steps, &
          cfg_monotonic, cfg_scalar_advection, cfg_apply_lbcs, &
          cfg_mix_full, cfg_iau, cfg_gpu_aware_comm, &
+         cfg_smdiv, cfg_len_disp, cfg_apvm_upwinding, cfg_hollingsworth, &
          mpi_comm_handle)
 
       if (ierr /= 0) then
@@ -394,6 +413,63 @@ module mpas_dycore_marshalling
         if (associated(arr3d)) cptr = c_loc(arr3d(1,1,1))
      end if
    end function mpas_cpp_get_pointer
+
+
+   !***********************************************************************
+   !> @brief FFI lookup bridge to dynamically query integer array pointers.
+   !***********************************************************************
+   function mpas_cpp_get_int_pointer(pool_name_c, var_name_c, dim_num, time_level) result(cptr) bind(C, name='mpas_cpp_get_int_pointer')
+      use iso_c_binding
+      use mpas_c_interfacing, only : mpas_c_to_f_string
+      use mpas_pool_routines, only : mpas_pool_get_subpool, mpas_pool_get_array
+      implicit none
+      character(kind=c_char), intent(in) :: pool_name_c(*)
+      character(kind=c_char), intent(in) :: var_name_c(*)
+      integer(c_int), value :: dim_num
+      integer(c_int), value :: time_level
+      type(c_ptr) :: cptr
+
+      type(mpas_pool_type), pointer :: pool
+      integer, dimension(:), pointer :: arr1d
+      integer, dimension(:,:), pointer :: arr2d
+      integer, dimension(:,:,:), pointer :: arr3d
+      character(len=StrKIND) :: pool_name, var_name
+
+      cptr = c_null_ptr
+      if (.not. associated(global_domain)) return
+
+      call mpas_c_to_f_string(pool_name_c, pool_name)
+      call mpas_c_to_f_string(var_name_c, var_name)
+
+      call mpas_pool_get_subpool(global_domain % blocklist % structs, trim(pool_name), pool)
+      if (.not. associated(pool)) return
+
+      if (dim_num == 1) then
+         nullify(arr1d)
+         if (time_level > 0) then
+            call mpas_pool_get_array(pool, trim(var_name), arr1d, time_level)
+         else
+            call mpas_pool_get_array(pool, trim(var_name), arr1d)
+         end if
+         if (associated(arr1d)) cptr = c_loc(arr1d(1))
+      else if (dim_num == 2) then
+         nullify(arr2d)
+         if (time_level > 0) then
+            call mpas_pool_get_array(pool, trim(var_name), arr2d, time_level)
+         else
+            call mpas_pool_get_array(pool, trim(var_name), arr2d)
+         end if
+         if (associated(arr2d)) cptr = c_loc(arr2d(1,1))
+      else if (dim_num == 3) then
+         nullify(arr3d)
+         if (time_level > 0) then
+            call mpas_pool_get_array(pool, trim(var_name), arr3d, time_level)
+         else
+            call mpas_pool_get_array(pool, trim(var_name), arr3d)
+         end if
+         if (associated(arr3d)) cptr = c_loc(arr3d(1,1,1))
+      end if
+   end function mpas_cpp_get_int_pointer
 
    end module mpas_dycore_marshalling
 

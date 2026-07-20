@@ -75,6 +75,7 @@ module mpas_dycore_interface
         time_integration_order, number_of_sub_steps, dynamics_split_steps, &
         config_monotonic, config_scalar_advection, config_apply_lbcs, &
         config_mix_full, config_iau, gpu_aware_comm, &
+        config_smdiv, config_len_disp, config_apvm_upwinding, config_hollingsworth, &
         mpi_comm_fortran) &
         result(ierr) bind(C, name='dycore_init')
       import :: c_int, c_double
@@ -115,6 +116,10 @@ module mpas_dycore_interface
       integer(c_int), value, intent(in) :: config_mix_full
       integer(c_int), value, intent(in) :: config_iau
       integer(c_int), value, intent(in) :: gpu_aware_comm
+      real(c_double), value, intent(in) :: config_smdiv
+      real(c_double), value, intent(in) :: config_len_disp
+      real(c_double), value, intent(in) :: config_apvm_upwinding
+      integer(c_int), value, intent(in) :: config_hollingsworth
       integer(c_int), value, intent(in) :: mpi_comm_fortran
     end function dycore_init
 
