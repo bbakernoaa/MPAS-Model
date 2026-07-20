@@ -268,7 +268,103 @@ DiagFields<ExecSpace> build_diag_fields(const Field_Store<Scalar, ExecSpace>& st
   diag.divergence = store.level("divergence", 1);
   diag.pv_vertex = store.level("pv_vertex", 1);
   diag.pv_edge = store.level("pv_edge", 1);
+  diag.pv_cell = store.level("pv_cell", 1);
+  diag.gradPVn = store.level("gradPVn", 1);
+  diag.gradPVt = store.level("gradPVt", 1);
   return diag;
+}
+
+template <class ExecSpace>
+ScalarTransportMeshData<ExecSpace> build_scalar_transport_mesh(
+    const AdvanceDomain& domain,
+    const Kokkos::View<const Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& fnm,
+    const Kokkos::View<const Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& fnp,
+    const Kokkos::View<const Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rdnw) {
+  auto& store = *domain.field_store;
+  ScalarTransportMeshData<ExecSpace> mesh;
+  mesh.nCells = domain.nCells;
+  mesh.nEdges = domain.nEdges;
+  mesh.nVertLevels = domain.nVertLevels;
+  mesh.num_scalars = domain.num_scalars;
+  mesh.maxEdges = domain.maxEdges;
+  mesh.maxAdvCellsForEdge = 15;
+
+  mesh.cellsOnEdge = cast_view_2d<int>(domain.cellsOnEdge);
+  mesh.edgesOnCell = cast_view_2d<int>(domain.edgesOnCell);
+  mesh.nEdgesOnCell = cast_view_1d<int>(domain.nEdgesOnCell);
+  mesh.advCellsForEdge = cast_view_2d<int>(domain.advCellsForEdge);
+  mesh.nAdvCellsForEdge = cast_view_1d<int>(domain.nAdvCellsForEdge);
+
+  mesh.adv_coefs = store.level("adv_coefs", 1);
+  mesh.adv_coefs_3rd = store.level("adv_coefs_3rd", 1);
+  mesh.edgesOnCell_sign = store.level("edgesOnCell_sign", 1);
+  mesh.dvEdge = cast_view_1d<Scalar>(domain.dvEdge);
+  mesh.invAreaCell = cast_view_1d<Scalar>(store.level("invAreaCell", 1));
+
+  mesh.fnm = fnm;
+  mesh.fnp = fnp;
+  mesh.rdnw = rdnw;
+
+  mesh.bdyMaskCell = cast_view_1d<int>(domain.bdyMaskCell);
+  mesh.bdyMaskEdge = cast_view_1d<int>(domain.bdyMaskEdge);
+  return mesh;
+}
+
+template <class ExecSpace>
+ScalarTransportState<ExecSpace> build_scalar_transport_state(
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& tend_scalars,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& adv_flux_of_scalars,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& mass_flux) {
+  ScalarTransportState<ExecSpace> state;
+  state.scalars = scalars;
+  state.tend_scalars = tend_scalars;
+  state.adv_flux_of_scalars = adv_flux_of_scalars;
+  state.mass_flux = mass_flux;
+  return state;
+}
+
+template <class ExecSpace>
+MonoTransportMeshData<ExecSpace> build_mono_transport_mesh(const AdvanceDomain& domain) {
+  auto& store = *domain.field_store;
+  MonoTransportMeshData<ExecSpace> mesh;
+  mesh.nCells = domain.nCells;
+  mesh.nEdges = domain.nEdges;
+  mesh.nVertLevels = domain.nVertLevels;
+  mesh.num_scalars = domain.num_scalars;
+
+  mesh.cellsOnEdge = cast_view_2d<int>(domain.cellsOnEdge);
+  mesh.edgesOnCell = cast_view_2d<int>(domain.edgesOnCell);
+  mesh.edgesOnEdge = cast_view_2d<int>(domain.edgesOnEdge);
+  mesh.nEdgesOnCell = cast_view_1d<int>(domain.nEdgesOnCell);
+  mesh.nEdgesOnEdge = cast_view_1d<int>(domain.nEdgesOnEdge);
+
+  mesh.invAreaCell = cast_view_1d<Scalar>(store.level("invAreaCell", 1));
+  mesh.weightsOnEdge = store.level("weightsOnEdge", 1);
+  mesh.bdyMaskCell = cast_view_1d<int>(domain.bdyMaskCell);
+  return mesh;
+}
+
+template <class ExecSpace>
+MonoTransportState<ExecSpace> build_mono_transport_state(
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars_old,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& tend_scalars,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& adv_flux_of_scalars,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& mass_flux,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& mass_flux_save,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_tl1,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_tl2) {
+  MonoTransportState<ExecSpace> state;
+  state.scalars = scalars;
+  state.scalars_old = scalars_old;
+  state.tend_scalars = tend_scalars;
+  state.adv_flux_of_scalars = adv_flux_of_scalars;
+  state.mass_flux = mass_flux;
+  state.mass_flux_save = mass_flux_save;
+  state.rho_zz_old = rho_zz_tl1;
+  state.rho_zz_new = rho_zz_tl2;
+  return state;
 }
 
 inline DynTendParams build_dyn_tend_params(const AdvanceDomain& domain, Scalar dt_dynamics) {
