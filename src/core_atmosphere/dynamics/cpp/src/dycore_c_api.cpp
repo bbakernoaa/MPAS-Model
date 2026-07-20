@@ -152,8 +152,8 @@ const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
   {"vorticity",     "vorticity",    "diag", 2, 0, "nVertLevels",   "nVertices"},
   {"divergence",    "divergence",   "diag", 2, 0, "nVertLevels",   "nCells"},
   {"ke",            "ke",           "diag", 2, 0, "nVertLevels",   "nCells"},
-  {"pv_edge",       "pv_edge",      "diag", 2, 0, "nVertLevels",   "nEdges"},
   {"pv_vertex",     "pv_vertex",    "diag", 2, 0, "nVertLevels",   "nVertices"},
+  {"pv_edge",       "pv_edge",      "diag", 2, 0, "nVertLevels",   "nEdges"},
   {"pv_cell",       "pv_cell",      "diag", 2, 0, "nVertLevels",   "nCells"},
   {"gradPVn",       "gradPVn",      "diag", 2, 0, "nVertLevels",   "nEdges"},
   {"gradPVt",       "gradPVt",      "diag", 2, 0, "nVertLevels",   "nEdges"},
@@ -219,10 +219,17 @@ const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
   {"v_init",        "v_init",       "mesh", 1, 0, "nVertLevels",   "1"},
   {"adv_coefs",     "adv_coefs",    "mesh", 2, 0, "15",           "nEdges"},
   {"adv_coefs_3rd", "adv_coefs_3rd", "mesh", 2, 0, "15",           "nEdges"},
-  {"rt_diabatic_tend", "rt_diabatic_tend", "tend", 2, 0, "nVertLevels", "nCells"}
+  {"rt_diabatic_tend", "rt_diabatic_tend", "tend", 2, 0, "nVertLevels", "nCells"},
+  {"fnm",           "fnm",          "mesh", 1, 0, "nVertLevels+1", "1"},
+  {"fnp",           "fnp",          "mesh", 1, 0, "nVertLevels+1", "1"},
+  {"rdnw",          "rdnw",         "mesh", 1, 0, "nVertLevels",   "1"},
+  {"mass_flux",     "mass_flux",    "diag", 2, 0, "nVertLevels",   "nEdges"},
+  {"mass_flux_save", "mass_flux_save", "diag", 2, 0, "nVertLevels", "nEdges"},
+  {"tend_scalars",  "tend_scalar",  "tend", 2, 0, "num_scalars*nVertLevels", "nCells"},
+  {"adv_flux_of_scalars", "adv_flux_of_scalars", "diag", 2, 0, "nVertLevels", "nEdges"}
 };
 
-int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges) {
+int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges, int num_scalars) {
   if (extent_name == "nCells")        return nCells;
   if (extent_name == "nEdges")        return nEdges;
   if (extent_name == "nVertices")     return nVertices;
@@ -233,15 +240,16 @@ int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int n
   if (extent_name == "15")            return 15;
   if (extent_name == "3")             return 3;
   if (extent_name == "1")             return 1;
+  if (extent_name == "num_scalars*nVertLevels") return num_scalars * nVertLevels;
   throw std::runtime_error("C++ Dycore: Unknown extent: " + extent_name);
 }
 
 void wrap_all_diagnostic_fields(FieldStore& store, 
                                 std::vector<std::string>& prognostic_field_names,
-                                int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges) {
+                                int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges, int num_scalars) {
   for (const auto& meta : G_DIAGNOSTIC_FIELDS) {
-    int n_inner = resolve_extent(meta.extent_x, nCells, nEdges, nVertices, nVertLevels, maxEdges);
-    int n_elem  = resolve_extent(meta.extent_y, nCells, nEdges, nVertices, nVertLevels, maxEdges);
+    int n_inner = resolve_extent(meta.extent_x, nCells, nEdges, nVertices, nVertLevels, maxEdges, num_scalars);
+    int n_elem  = resolve_extent(meta.extent_y, nCells, nEdges, nVertices, nVertLevels, maxEdges, num_scalars);
 
     if (meta.time_levels > 0) {
       std::vector<Scalar*> ptrs;
@@ -489,7 +497,7 @@ int dycore_init(
   }
 
   // Wrap all dynamic diagnostics and tendency fields from MPAS pools
-  wrap_all_diagnostic_fields(store, names, nCells, nEdges, nVertices, nVertLevels, maxEdges);
+  wrap_all_diagnostic_fields(store, names, nCells, nEdges, nVertices, nVertLevels, maxEdges, num_scalars);
 
   return 0;  // Success
 }
