@@ -127,6 +127,7 @@ struct AdvanceDomain {
   Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::DefaultExecutionSpace::memory_space> nAdvCellsForEdge;
   Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::DefaultExecutionSpace::memory_space> verticesOnCell;
   Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::DefaultExecutionSpace::memory_space> kiteForCell;
+  Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::DefaultExecutionSpace::memory_space> cellsOnCell;
 };
 
 using ExecSpace = Kokkos::DefaultExecutionSpace;
@@ -277,9 +278,9 @@ DiagFields<ExecSpace> build_diag_fields(const Field_Store<Scalar, ExecSpace>& st
 template <class ExecSpace>
 ScalarTransportMeshData<ExecSpace> build_scalar_transport_mesh(
     const AdvanceDomain& domain,
-    const Kokkos::View<const Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& fnm,
-    const Kokkos::View<const Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& fnp,
-    const Kokkos::View<const Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rdnw) {
+    const Kokkos::View<Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& fnm,
+    const Kokkos::View<Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& fnp,
+    const Kokkos::View<Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rdnw) {
   auto& store = *domain.field_store;
   ScalarTransportMeshData<ExecSpace> mesh;
   mesh.nCells = domain.nCells;
@@ -312,15 +313,27 @@ ScalarTransportMeshData<ExecSpace> build_scalar_transport_mesh(
 
 template <class ExecSpace>
 ScalarTransportState<ExecSpace> build_scalar_transport_state(
-    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& tend_scalars,
-    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& adv_flux_of_scalars,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& mass_flux) {
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars_old_2d,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars_new_2d,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& tend_scalars_2d,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_old,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_new,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& uhAvg,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& wwAvg,
+    int num_scalars, int nVertLevels, int nCells) {
   ScalarTransportState<ExecSpace> state;
-  state.scalars = scalars;
-  state.tend_scalars = tend_scalars;
-  state.adv_flux_of_scalars = adv_flux_of_scalars;
-  state.mass_flux = mass_flux;
+  state.scalar_old = Kokkos::View<Scalar***, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      scalars_old_2d.data(), num_scalars, nVertLevels, nCells);
+  state.scalar_new = Kokkos::View<Scalar***, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      scalars_new_2d.data(), num_scalars, nVertLevels, nCells);
+  state.scalar_tend = Kokkos::View<Scalar***, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      const_cast<Scalar*>(tend_scalars_2d.data()), num_scalars, nVertLevels, nCells);
+  state.rho_zz_old = Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      const_cast<Scalar*>(rho_zz_old.data()), rho_zz_old.extent(0), rho_zz_old.extent(1));
+  state.rho_zz_new = Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      const_cast<Scalar*>(rho_zz_new.data()), rho_zz_new.extent(0), rho_zz_new.extent(1));
+  state.uhAvg = uhAvg;
+  state.wwAvg = wwAvg;
   return state;
 }
 
@@ -328,42 +341,36 @@ template <class ExecSpace>
 MonoTransportMeshData<ExecSpace> build_mono_transport_mesh(const AdvanceDomain& domain) {
   auto& store = *domain.field_store;
   MonoTransportMeshData<ExecSpace> mesh;
-  mesh.nCells = domain.nCells;
-  mesh.nEdges = domain.nEdges;
-  mesh.nVertLevels = domain.nVertLevels;
-  mesh.num_scalars = domain.num_scalars;
+  mesh.nCellsSolve = domain.nCells; // Set nCellsSolve to nCells in domain
+  mesh.maxEdges = domain.maxEdges;
 
-  mesh.cellsOnEdge = cast_view_2d<int>(domain.cellsOnEdge);
-  mesh.edgesOnCell = cast_view_2d<int>(domain.edgesOnCell);
-  mesh.edgesOnEdge = cast_view_2d<int>(domain.edgesOnEdge);
-  mesh.nEdgesOnCell = cast_view_1d<int>(domain.nEdgesOnCell);
-  mesh.nEdgesOnEdge = cast_view_1d<int>(domain.nEdgesOnEdge);
-
-  mesh.invAreaCell = cast_view_1d<Scalar>(store.level("invAreaCell", 1));
-  mesh.weightsOnEdge = store.level("weightsOnEdge", 1);
-  mesh.bdyMaskCell = cast_view_1d<int>(domain.bdyMaskCell);
+  mesh.cellsOnCell = cast_view_2d<int>(domain.cellsOnCell);
   return mesh;
 }
 
 template <class ExecSpace>
 MonoTransportState<ExecSpace> build_mono_transport_state(
-    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars,
-    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars_old,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& tend_scalars,
-    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& adv_flux_of_scalars,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& mass_flux,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& mass_flux_save,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_tl1,
-    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_tl2) {
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars_old_2d,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& scalars_new_2d,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& tend_scalars_2d,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_old,
+    const Kokkos::View<const Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& rho_zz_new,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& uhAvg,
+    const Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>& wwAvg,
+    int num_scalars, int nVertLevels, int nCells) {
   MonoTransportState<ExecSpace> state;
-  state.scalars = scalars;
-  state.scalars_old = scalars_old;
-  state.tend_scalars = tend_scalars;
-  state.adv_flux_of_scalars = adv_flux_of_scalars;
-  state.mass_flux = mass_flux;
-  state.mass_flux_save = mass_flux_save;
-  state.rho_zz_old = rho_zz_tl1;
-  state.rho_zz_new = rho_zz_tl2;
+  state.scalars_old = Kokkos::View<Scalar***, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      scalars_old_2d.data(), num_scalars, nVertLevels, nCells);
+  state.scalars_new = Kokkos::View<Scalar***, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      scalars_new_2d.data(), num_scalars, nVertLevels, nCells);
+  state.scalar_tend = Kokkos::View<Scalar***, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      const_cast<Scalar*>(tend_scalars_2d.data()), num_scalars, nVertLevels, nCells);
+  state.rho_zz_old = Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      const_cast<Scalar*>(rho_zz_old.data()), rho_zz_old.extent(0), rho_zz_old.extent(1));
+  state.rho_zz_new = Kokkos::View<Scalar**, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+      const_cast<Scalar*>(rho_zz_new.data()), rho_zz_new.extent(0), rho_zz_new.extent(1));
+  state.uhAvg = uhAvg;
+  state.wwAvg = wwAvg;
   return state;
 }
 
@@ -960,20 +967,50 @@ inline void Time_Integrator_Advance::rk_stage(
   //     re-integrated over the transport timestep (Req 5.5).
   // ════════════════════════════════════════════════════════════════════════
   if (domain.scalar_advection_enabled && !domain.split_dynamics_transport) {
-    const bool final_stage = (rk_step == 3);
+    auto& store = *domain.field_store;
+    auto scalars_old = store.level("scalars", 1);
+    auto scalars = store.level("scalars", state_level);
+    auto tend_scalars = store.level("tend_scalars", 1);
+    auto adv_flux_of_scalars = store.level("adv_flux_of_scalars", 1);
+    auto mass_flux = store.level("mass_flux", 1);
+    auto mass_flux_save = store.level("mass_flux_save", 1);
+    auto rho_zz_tl1 = store.level("rho_zz", 1);
+    auto rho_zz_tl2 = store.level("rho_zz", 2);
+
+    auto fnm_1d = Kokkos::subview(store.level("fnm", 1), Kokkos::ALL(), 0);
+    auto fnp_1d = Kokkos::subview(store.level("fnp", 1), Kokkos::ALL(), 0);
+    auto rdnw_1d = Kokkos::subview(store.level("rdnw", 1), Kokkos::ALL(), 0);
+
+    ScalarTransportMeshData<ExecSpace> transp_mesh =
+        build_scalar_transport_mesh<ExecSpace>(domain, fnm_1d, fnp_1d, rdnw_1d);
+    ScalarTransportState<ExecSpace> transp_state =
+        build_scalar_transport_state<ExecSpace>(
+            scalars_old, scalars, tend_scalars, rho_zz_tl1, rho_zz_tl2,
+            mass_flux, wwAvg, domain.num_scalars, domain.nVertLevels, domain.nCells);
+
+    const int num_rk_stages = config.time_integration_order;
+    const bool final_stage = (rk_step == num_rk_stages);
     const bool use_mono = final_stage && config.config_monotonic;
 
     if (use_mono) {
-      // [Scalar_Transport_Mono<ExecSpace>::advance_scalars_mono(
-      //     mono_mesh, mono_state, scalar_mesh, dt_transport,
-      //     coef_3rd_order, rk_step, config.time_integration_order,
-      //     /*advance_density=*/false, config.config_apply_lbcs,
-      //     moist_start, moist_end)]
+      MonoTransportMeshData<ExecSpace> mono_mesh =
+          build_mono_transport_mesh<ExecSpace>(domain);
+      MonoTransportState<ExecSpace> mono_state =
+          build_mono_transport_state<ExecSpace>(
+              scalars_old, scalars, tend_scalars, rho_zz_tl1, rho_zz_tl2,
+              mass_flux, wwAvg, domain.num_scalars, domain.nVertLevels, domain.nCells);
+
+      Scalar_Transport_Mono<ExecSpace> transport_mono;
+      transport_mono.advance_scalars_mono(
+          transp_mesh, mono_mesh, mono_state, rk_dt,
+          Scalar(0.25), /*advance_density=*/false, config.config_apply_lbcs,
+          /*moist_start=*/0, /*moist_end=*/domain.num_scalars);
     } else {
-      // [Scalar_Transport<ExecSpace>::advance_scalars(
-      //     scalar_mesh, scalar_state, dt_transport,
-      //     coef_3rd_order, rk_step, config.time_integration_order,
-      //     /*advance_density=*/false, config.config_apply_lbcs)]
+      Scalar_Transport<ExecSpace> transport;
+      transport.advance_scalars(
+          transp_mesh, transp_state, rk_dt,
+          Scalar(0.25), rk_step, config.time_integration_order,
+          /*advance_density=*/false, config.config_apply_lbcs);
     }
 
     // Regional: exchange scalars halo and apply boundary adjustment
