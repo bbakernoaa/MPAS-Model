@@ -88,6 +88,7 @@ struct DycoreContext {
   Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> nAdvCellsForEdge;
   Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> verticesOnCell;
   Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> kiteForCell;
+  Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> cellsOnCell;
 
   DycoreContext(Config cfg) : config(std::move(cfg)) {}
 };
@@ -219,14 +220,7 @@ const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
   {"v_init",        "v_init",       "mesh", 1, 0, "nVertLevels",   "1"},
   {"adv_coefs",     "adv_coefs",    "mesh", 2, 0, "15",           "nEdges"},
   {"adv_coefs_3rd", "adv_coefs_3rd", "mesh", 2, 0, "15",           "nEdges"},
-  {"rt_diabatic_tend", "rt_diabatic_tend", "tend", 2, 0, "nVertLevels", "nCells"},
-  {"fnm",           "fnm",          "mesh", 1, 0, "nVertLevels+1", "1"},
-  {"fnp",           "fnp",          "mesh", 1, 0, "nVertLevels+1", "1"},
-  {"rdnw",          "rdnw",         "mesh", 1, 0, "nVertLevels",   "1"},
-  {"mass_flux",     "mass_flux",    "diag", 2, 0, "nVertLevels",   "nEdges"},
-  {"mass_flux_save", "mass_flux_save", "diag", 2, 0, "nVertLevels", "nEdges"},
-  {"tend_scalars",  "tend_scalar",  "tend", 2, 0, "num_scalars*nVertLevels", "nCells"},
-  {"adv_flux_of_scalars", "adv_flux_of_scalars", "diag", 2, 0, "nVertLevels", "nEdges"}
+  {"rt_diabatic_tend", "rt_diabatic_tend", "tend", 2, 0, "nVertLevels", "nCells"}
 };
 
 int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges, int num_scalars) {
@@ -436,6 +430,21 @@ int dycore_init(
     names.push_back("scalars");
   }
 
+  // tend_scalars: (num_scalars * nVertLevels, nCells) x 1 time level
+  {
+    if (num_scalars > 0) {
+      Scalar* scalars_tend_ptr = static_cast<Scalar*>(mpas_cpp_get_pointer("tend", "scalars_tend", 3, 1));
+      if (scalars_tend_ptr) {
+        std::vector<Scalar*> sc_tend_ptrs = {scalars_tend_ptr};
+        store.wrap("tend_scalars", sc_tend_ptrs, num_scalars * nVertLevels, nCells);
+      } else {
+        store.allocate("tend_scalars", num_scalars * nVertLevels, nCells);
+      }
+    } else {
+      store.allocate("tend_scalars", 0, nCells);
+    }
+  }
+
   // Wrap boundary specified zone integer masks dynamically if they are present in the mesh pool
   int* bdyMaskCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "bdyMaskCell", 1, 0));
   int* bdyMaskEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "bdyMaskEdge", 1, 0));
@@ -444,11 +453,17 @@ int dycore_init(
     Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::HostSpace> host_cell(bdyMaskCell_ptr, nCells);
     g_context->bdyMaskCell = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("bdyMaskCell", nCells);
     Kokkos::deep_copy(g_context->bdyMaskCell, host_cell);
+  } else {
+    g_context->bdyMaskCell = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("bdyMaskCell", nCells);
+    Kokkos::deep_copy(g_context->bdyMaskCell, 0);
   }
   if (bdyMaskEdge_ptr) {
     Kokkos::View<const int*, Kokkos::LayoutLeft, Kokkos::HostSpace> host_edge(bdyMaskEdge_ptr, nEdges);
     g_context->bdyMaskEdge = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("bdyMaskEdge", nEdges);
     Kokkos::deep_copy(g_context->bdyMaskEdge, host_edge);
+  } else {
+    g_context->bdyMaskEdge = Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace>("bdyMaskEdge", nEdges);
+    Kokkos::deep_copy(g_context->bdyMaskEdge, 0);
   }
 
   // Load integer mesh connectivity dynamically
@@ -459,6 +474,7 @@ int dycore_init(
   int* nAdvCellsForEdge_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "nAdvCellsForEdge", 1, 0));
   int* verticesOnCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "verticesOnCell", 2, 0));
   int* kiteForCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "kiteForCell", 2, 0));
+  int* cellsOnCell_ptr = static_cast<int*>(mpas_cpp_get_int_pointer("mesh", "cellsOnCell", 2, 0));
 
   if (edgesOnEdge_ptr) {
     Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(edgesOnEdge_ptr, 6, nEdges);
@@ -494,6 +510,11 @@ int dycore_init(
     Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(kiteForCell_ptr, maxEdges, nCells);
     g_context->kiteForCell = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("kiteForCell", maxEdges, nCells);
     Kokkos::deep_copy(g_context->kiteForCell, host);
+  }
+  if (cellsOnCell_ptr) {
+    Kokkos::View<const int**, Kokkos::LayoutLeft, Kokkos::HostSpace> host(cellsOnCell_ptr, maxEdges, nCells);
+    g_context->cellsOnCell = Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace>("cellsOnCell", maxEdges, nCells);
+    Kokkos::deep_copy(g_context->cellsOnCell, host);
   }
 
   // Wrap all dynamic diagnostics and tendency fields from MPAS pools
@@ -552,7 +573,8 @@ void dycore_timestep(double dt, int itimestep) {
       .edgesOnVertex = g_context->edgesOnVertex,
       .nEdgesOnEdge = g_context->nEdgesOnEdge,
       .advCellsForEdge = g_context->advCellsForEdge,
-      .nAdvCellsForEdge = g_context->nAdvCellsForEdge
+      .nAdvCellsForEdge = g_context->nAdvCellsForEdge,
+      .cellsOnCell = g_context->cellsOnCell
   };
 
   cpp_debug_log("[CPP DEBUG] AdvanceDomain constructed. cells=%d zz_extent0=%d\n", domain.nCells, (int)domain.zz.extent(0));

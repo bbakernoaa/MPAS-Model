@@ -341,7 +341,7 @@ template <class ExecSpace>
 MonoTransportMeshData<ExecSpace> build_mono_transport_mesh(const AdvanceDomain& domain) {
   auto& store = *domain.field_store;
   MonoTransportMeshData<ExecSpace> mesh;
-  mesh.nCellsSolve = domain.nCells; // Set nCellsSolve to nCells in domain
+  mesh.nCellsSolve = domain.nCellsSolve; // MUST be domain.nCellsSolve to prevent out-of-subdomain halo cell accesses!
   mesh.maxEdges = domain.maxEdges;
 
   mesh.cellsOnCell = cast_view_2d<int>(domain.cellsOnCell);
@@ -971,22 +971,23 @@ inline void Time_Integrator_Advance::rk_stage(
     auto scalars_old = store.level("scalars", 1);
     auto scalars = store.level("scalars", state_level);
     auto tend_scalars = store.level("tend_scalars", 1);
-    auto adv_flux_of_scalars = store.level("adv_flux_of_scalars", 1);
-    auto mass_flux = store.level("mass_flux", 1);
-    auto mass_flux_save = store.level("mass_flux_save", 1);
+    auto ruAvg = store.level("ruAvg", 1);
+    auto wwAvg = store.level("wwAvg", 1);
     auto rho_zz_tl1 = store.level("rho_zz", 1);
     auto rho_zz_tl2 = store.level("rho_zz", 2);
 
-    auto fnm_1d = Kokkos::subview(store.level("fnm", 1), Kokkos::ALL(), 0);
-    auto fnp_1d = Kokkos::subview(store.level("fnp", 1), Kokkos::ALL(), 0);
-    auto rdnw_1d = Kokkos::subview(store.level("rdnw", 1), Kokkos::ALL(), 0);
+    auto fnm_1d = Kokkos::View<Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+        const_cast<Scalar*>(domain.fzm.data()), domain.fzm.extent(0));
+    auto fnp_1d = Kokkos::View<Scalar*, Kokkos::LayoutLeft, typename ExecSpace::memory_space>(
+        const_cast<Scalar*>(domain.fzp.data()), domain.fzp.extent(0));
+    auto rdnw_1d = Kokkos::subview(store.level("rdzw", 1), Kokkos::ALL(), 0);
 
     ScalarTransportMeshData<ExecSpace> transp_mesh =
         build_scalar_transport_mesh<ExecSpace>(domain, fnm_1d, fnp_1d, rdnw_1d);
     ScalarTransportState<ExecSpace> transp_state =
         build_scalar_transport_state<ExecSpace>(
             scalars_old, scalars, tend_scalars, rho_zz_tl1, rho_zz_tl2,
-            mass_flux, wwAvg, domain.num_scalars, domain.nVertLevels, domain.nCells);
+            ruAvg, wwAvg, domain.num_scalars, domain.nVertLevels, domain.nCells);
 
     const int num_rk_stages = config.time_integration_order;
     const bool final_stage = (rk_step == num_rk_stages);
@@ -998,7 +999,7 @@ inline void Time_Integrator_Advance::rk_stage(
       MonoTransportState<ExecSpace> mono_state =
           build_mono_transport_state<ExecSpace>(
               scalars_old, scalars, tend_scalars, rho_zz_tl1, rho_zz_tl2,
-              mass_flux, wwAvg, domain.num_scalars, domain.nVertLevels, domain.nCells);
+              ruAvg, wwAvg, domain.num_scalars, domain.nVertLevels, domain.nCells);
 
       Scalar_Transport_Mono<ExecSpace> transport_mono;
       transport_mono.advance_scalars_mono(

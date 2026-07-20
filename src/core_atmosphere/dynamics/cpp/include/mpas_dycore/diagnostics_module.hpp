@@ -442,20 +442,21 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
 
     // Part 1: ke_vertex(k,iVertex) = 0.25 * invAreaTriangle(iV)
     //           * sum(ke_edge(k, edgesOnVertex(i,iV)), i=1..vertexDegree)
-    std::printf("[DIAG DEBUG] Starting Hollingsworth Step 5 Part 1...\n"); std::fflush(stdout);
+    diag_debug_log("[DIAG DEBUG] Starting Hollingsworth Step 5 Part 1...\n");
     Kokkos::parallel_for(
         "diag::ke_vertex",
-        Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-            {0, 0}, {nVertLevels, nVertices}),
-        KOKKOS_LAMBDA(const int k, const int iVertex) {
+        Kokkos::RangePolicy<exec_space>(0, nVertices),
+        KOKKOS_LAMBDA(const int iVertex) {
           const Scalar r = Scalar(0.25) * invAreaTriangle(iVertex);
-          Scalar ke_v = Scalar(0);
-          for (int i = 0; i < vertexDegree; ++i) {
-            const int iEdge = edgesOnVertex(i, iVertex) - 1;
-            if (iEdge < 0 || iEdge >= nEdges) continue;
-            ke_v += ke_edge(k, iEdge);
+          for (int k = 0; k < nVertLevels; ++k) {
+            Scalar ke_v = Scalar(0);
+            for (int i = 0; i < vertexDegree; ++i) {
+              const int iEdge = edgesOnVertex(i, iVertex) - 1;
+              if (iEdge < 0 || iEdge >= nEdges) continue;
+              ke_v += ke_edge(k, iEdge);
+            }
+            ke_vertex(k, iVertex) = ke_v * r;
           }
-          ke_vertex(k, iVertex) = ke_v * r;
         });
     Kokkos::fence("diag::ke_vertex_fence");
 
@@ -465,27 +466,28 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
     //            + sum_i((1-ke_fact)*kiteAreasOnVertex(j,iV)*ke_vertex(k,iV)*invAreaCell(iC))
     const Scalar ke_fact = Scalar(1.0) - Scalar(0.375);
 
-    std::printf("[DIAG DEBUG] Starting Hollingsworth Step 5 Part 2...\n"); std::fflush(stdout);
+    diag_debug_log("[DIAG DEBUG] Starting Hollingsworth Step 5 Part 2...\n");
     Kokkos::parallel_for(
         "diag::hollingsworth_blend",
-        Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-            {0, 0}, {nVertLevels, nCells}),
-        KOKKOS_LAMBDA(const int k, const int iCell) {
-          ke(k, iCell) = ke_fact * ke(k, iCell);
+        Kokkos::RangePolicy<exec_space>(0, nCells),
+        KOKKOS_LAMBDA(const int iCell) {
           const Scalar r = invAreaCell(iCell);
           const int ne = nEdgesOnCell_v(iCell);
-          for (int i = 0; i < ne; ++i) {
-            if (i >= static_cast<int>(verticesOnCell.extent(0)) || i >= static_cast<int>(kiteForCell.extent(0))) continue;
-            const int iVertex = verticesOnCell(i, iCell) - 1;
-            const int j = kiteForCell(i, iCell) - 1;  // 1-based to 0-based
-            if (iVertex < 0 || iVertex >= nVertices || j < 0 || j >= 3) continue;
-            ke(k, iCell) += (Scalar(1.0) - ke_fact) *
-                            kiteAreasOnVertex(j, iVertex) *
-                            ke_vertex(k, iVertex) * r;
+          for (int k = 0; k < nVertLevels; ++k) {
+            ke(k, iCell) = ke_fact * ke(k, iCell);
+            for (int i = 0; i < ne; ++i) {
+              if (i >= static_cast<int>(verticesOnCell.extent(0)) || i >= static_cast<int>(kiteForCell.extent(0))) continue;
+              const int iVertex = verticesOnCell(i, iCell) - 1;
+              const int j = kiteForCell(i, iCell) - 1;  // 1-based to 0-based
+              if (iVertex < 0 || iVertex >= nVertices || j < 0 || j >= 3) continue;
+              ke(k, iCell) += (Scalar(1.0) - ke_fact) *
+                              kiteAreasOnVertex(j, iVertex) *
+                              ke_vertex(k, iVertex) * r;
+            }
           }
         });
     Kokkos::fence("diag::hollingsworth_fence");
-    std::printf("[DIAG DEBUG] Finished Hollingsworth Step 5.\n"); std::fflush(stdout);
+    diag_debug_log("[DIAG DEBUG] Finished Hollingsworth Step 5.\n");
   }  // hollingsworth
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -496,23 +498,24 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
   const bool reconstruct_v = (rk_step == 3) || (rk_step < 0);
 
   if (reconstruct_v) {
-    std::printf("[DIAG DEBUG] Starting Tangential Reconstruction Step 6...\n"); std::fflush(stdout);
+    diag_debug_log("[DIAG DEBUG] Starting Tangential Reconstruction Step 6...\n");
     Kokkos::parallel_for(
         "diag::tangential_velocity",
-        Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-            {0, 0}, {nVertLevels, nEdges}),
-        KOKKOS_LAMBDA(const int k, const int iEdge) {
-          Scalar v_sum = Scalar(0);
+        Kokkos::RangePolicy<exec_space>(0, nEdges),
+        KOKKOS_LAMBDA(const int iEdge) {
           const int ne = nEdgesOnEdge_v(iEdge);
-          for (int i = 0; i < ne; ++i) {
-            const int eoe = edgesOnEdge(i, iEdge) - 1;
-            if (eoe < 0 || eoe >= nEdges) continue;
-            v_sum += weightsOnEdge(i, iEdge) * u(k, eoe);
+          for (int k = 0; k < nVertLevels; ++k) {
+            Scalar v_sum = Scalar(0);
+            for (int i = 0; i < ne; ++i) {
+              const int eoe = edgesOnEdge(i, iEdge) - 1;
+              if (eoe < 0 || eoe >= nEdges) continue;
+              v_sum += weightsOnEdge(i, iEdge) * u(k, eoe);
+            }
+            v_out(k, iEdge) = v_sum;
           }
-          v_out(k, iEdge) = v_sum;
         });
     Kokkos::fence("diag::tangential_velocity_fence");
-    std::printf("[DIAG DEBUG] Finished Tangential Reconstruction Step 6.\n"); std::fflush(stdout);
+    diag_debug_log("[DIAG DEBUG] Finished Tangential Reconstruction Step 6.\n");
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -520,27 +523,32 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
   // pv_vertex(k,iVertex) = fVertex(iVertex) + vorticity(k,iVertex)
   // pv_edge(k,iEdge) = 0.5 * (pv_vertex(k,v1) + pv_vertex(k,v2))
   // ──────────────────────────────────────────────────────────────────────────
+  diag_debug_log("[DIAG DEBUG] Starting Step 7 Part 1 (pv_vertex)...\n");
   Kokkos::parallel_for(
       "diag::pv_vertex",
-      Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-          {0, 0}, {nVertLevels, nVertices}),
-      KOKKOS_LAMBDA(const int k, const int iVertex) {
-        pv_vertex(k, iVertex) = fVertex(iVertex) + vorticity(k, iVertex);
+      Kokkos::RangePolicy<exec_space>(0, nVertices),
+      KOKKOS_LAMBDA(const int iVertex) {
+        for (int k = 0; k < nVertLevels; ++k) {
+          pv_vertex(k, iVertex) = fVertex(iVertex) + vorticity(k, iVertex);
+        }
       });
   Kokkos::fence("diag::pv_vertex_fence");
 
+  diag_debug_log("[DIAG DEBUG] Starting Step 7 Part 2 (pv_edge)...\n");
   Kokkos::parallel_for(
       "diag::pv_edge",
-      Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-          {0, 0}, {nVertLevels, nEdges}),
-      KOKKOS_LAMBDA(const int k, const int iEdge) {
+      Kokkos::RangePolicy<exec_space>(0, nEdges),
+      KOKKOS_LAMBDA(const int iEdge) {
         const int v1 = verticesOnEdge(0, iEdge) - 1;
         const int v2 = verticesOnEdge(1, iEdge) - 1;
         if (v1 < 0 || v1 >= nVertices || v2 < 0 || v2 >= nVertices) return;
-        pv_edge(k, iEdge) =
-            Scalar(0.5) * (pv_vertex(k, v1) + pv_vertex(k, v2));
+        for (int k = 0; k < nVertLevels; ++k) {
+          pv_edge(k, iEdge) =
+              Scalar(0.5) * (pv_vertex(k, v1) + pv_vertex(k, v2));
+        }
       });
   Kokkos::fence("diag::pv_edge_fence");
+  diag_debug_log("[DIAG DEBUG] Finished Step 7.\n");
 
   // ──────────────────────────────────────────────────────────────────────────
   // Step 8: APVM upstream bias (Requirement 7.2)
@@ -549,21 +557,32 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
   // ──────────────────────────────────────────────────────────────────────────
   if (config_apvm_upwinding > Scalar(0)) {
     // Compute pv_cell: area-weighted average of surrounding pv_vertex
+    diag_debug_log("[DIAG DEBUG] Starting Step 8 Part 1 (pv_cell)...\n");
+    diag_debug_log("[DIAG DEBUG] pv_cell loop shapes: verticesOnCell=(%d,%d), kiteForCell=(%d,%d), kiteAreasOnVertex=(%d,%d), pv_vertex=(%d,%d), pv_cell=(%d,%d)\n",
+                   (int)verticesOnCell.extent(0), (int)verticesOnCell.extent(1),
+                   (int)kiteForCell.extent(0), (int)kiteForCell.extent(1),
+                   (int)kiteAreasOnVertex.extent(0), (int)kiteAreasOnVertex.extent(1),
+                   (int)pv_vertex.extent(0), (int)pv_vertex.extent(1),
+                   (int)pv_cell.extent(0), (int)pv_cell.extent(1));
+    diag_debug_log("[DIAG DEBUG] pv_cell loop pointers: verticesOnCell=%p, kiteForCell=%p, kiteAreasOnVertex=%p, pv_vertex=%p, pv_cell=%p\n",
+                   verticesOnCell.data(), kiteForCell.data(), kiteAreasOnVertex.data(), pv_vertex.data(), pv_cell.data());
     Kokkos::parallel_for(
         "diag::pv_cell",
-        Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-            {0, 0}, {nVertLevels, nCells}),
-        KOKKOS_LAMBDA(const int k, const int iCell) {
-          Scalar pvc = Scalar(0);
+        Kokkos::RangePolicy<exec_space>(0, nCells),
+        KOKKOS_LAMBDA(const int iCell) {
           const Scalar r = invAreaCell(iCell);
           const int ne = nEdgesOnCell_v(iCell);
-          for (int i = 0; i < ne; ++i) {
-            const int iVertex = verticesOnCell(i, iCell) - 1;
-            const int j = kiteForCell(i, iCell) - 1;
-            if (iVertex < 0 || iVertex >= nVertices || j < 0 || j >= 3) continue;
-            pvc += kiteAreasOnVertex(j, iVertex) * pv_vertex(k, iVertex) * r;
+          for (int k = 0; k < nVertLevels; ++k) {
+            Scalar pvc = Scalar(0);
+            for (int i = 0; i < ne; ++i) {
+              if (i >= static_cast<int>(verticesOnCell.extent(0)) || i >= static_cast<int>(kiteForCell.extent(0))) continue;
+              const int iVertex = verticesOnCell(i, iCell) - 1;
+              const int j = kiteForCell(i, iCell) - 1;
+              if (iVertex < 0 || iVertex >= nVertices || j < 0 || j >= 3) continue;
+              pvc += kiteAreasOnVertex(j, iVertex) * pv_vertex(k, iVertex) * r;
+            }
+            pv_cell(k, iCell) = pvc;
           }
-          pv_cell(k, iCell) = pvc;
         });
     Kokkos::fence("diag::pv_cell_fence");
 
@@ -573,11 +592,11 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
     // pv_edge -= apvm_upwinding * dt * (v * gradPVt + u * gradPVn)
     const Scalar apvm_factor = config_apvm_upwinding * dt;
 
+    diag_debug_log("[DIAG DEBUG] Starting Step 8 Part 2 (apvm_bias)...\n");
     Kokkos::parallel_for(
         "diag::apvm_bias",
-        Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>(
-            {0, 0}, {nVertLevels, nEdges}),
-        KOKKOS_LAMBDA(const int k, const int iEdge) {
+        Kokkos::RangePolicy<exec_space>(0, nEdges),
+        KOKKOS_LAMBDA(const int iEdge) {
           const int v1 = verticesOnEdge(0, iEdge) - 1;
           const int v2 = verticesOnEdge(1, iEdge) - 1;
           const int c1 = cellsOnEdge(0, iEdge) - 1;
@@ -588,15 +607,18 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
           const Scalar r1 = Scalar(1.0) * invDvEdge(iEdge);
           const Scalar r2 = Scalar(1.0) * invDcEdge(iEdge);
 
-          gradPVt(k, iEdge) = (pv_vertex(k, v2) - pv_vertex(k, v1)) * r1;
-          gradPVn(k, iEdge) = (pv_cell(k, c2) - pv_cell(k, c1)) * r2;
+          for (int k = 0; k < nVertLevels; ++k) {
+            gradPVt(k, iEdge) = (pv_vertex(k, v2) - pv_vertex(k, v1)) * r1;
+            gradPVn(k, iEdge) = (pv_cell(k, c2) - pv_cell(k, c1)) * r2;
 
-          pv_edge(k, iEdge) -= apvm_factor *
-              (v_out(k, iEdge) * gradPVt(k, iEdge) +
-               u(k, iEdge) * gradPVn(k, iEdge));
+            pv_edge(k, iEdge) -= apvm_factor *
+                (v_out(k, iEdge) * gradPVt(k, iEdge) +
+                 u(k, iEdge) * gradPVn(k, iEdge));
+          }
         });
-    Kokkos::fence("diag::apvm_fence");
-  }  // config_apvm_upwinding > 0
+    Kokkos::fence("diag::apvm_bias_fence");
+    diag_debug_log("[DIAG DEBUG] Finished Step 8.\n");
+  }
 }
 
 // ============================================================================

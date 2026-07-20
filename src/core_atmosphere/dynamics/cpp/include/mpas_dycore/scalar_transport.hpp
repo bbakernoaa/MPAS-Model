@@ -213,6 +213,7 @@ void Scalar_Transport<ExecSpace>::advance_scalars(
             Scalar flux_val = Scalar(0.0);
             for (int j = 0; j < nAdv; ++j) {
               const int iAdvCell = advCellsForEdge(j, iEdge) - 1;
+              if (iAdvCell < 0 || iAdvCell >= nCells) continue;
               const Scalar sw = adv_coefs(j, iEdge) +
                   sign_u * adv_coefs_3rd(j, iEdge);
               flux_val += sw * scalar_new(s, k, iAdvCell);
@@ -308,6 +309,7 @@ void Scalar_Transport<ExecSpace>::advance_scalars(
             Scalar h_tend = Scalar(0.0);
             for (int i = 0; i < ne; ++i) {
               const int iEdge = edgesOnCell(i, iCell) - 1;
+              if (iEdge < 0 || iEdge >= nEdges) continue;
               h_tend -= edgesOnCell_sign(i, iCell) *
                   uhAvg(k, iEdge) * horiz_flux(s, k, iEdge);
             }
