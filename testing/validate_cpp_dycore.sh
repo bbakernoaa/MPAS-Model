@@ -73,7 +73,7 @@ generate_namelist() {
     cat > "${output_dir}/namelist.atmosphere" << EOF
 &nhyd_model
     config_start_time = '2010-10-23_00:00:00'
-    config_run_duration = '1_00:00:00'
+    config_run_duration = '00:12:00'
     config_dt = ${DT}
     config_time_integration_order = 2
     config_dynamics_split_steps = 3
@@ -118,7 +118,7 @@ generate_streams() {
 <stream name="output"
         type="output"
         filename_template="${output_dir}/output.nc"
-        output_interval="1_00:00:00"
+        output_interval="00:12:00"
         clobber_mode="overwrite">
     <var name="u"/>
     <var name="w"/>
