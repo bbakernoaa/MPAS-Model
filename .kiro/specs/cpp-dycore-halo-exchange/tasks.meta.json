@@ -1,0 +1,291 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Implement `Indexed_Halo_Plan`, `Element_Kind`, and `Indexed_Neighbor`": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696333198
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696388178
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697199325
+      }
+    ],
+    "1.2 Write property test for plan topology preservation": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696335298
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697222344
+      }
+    ],
+    "1.3 Write property test for plan totals": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696336873
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697223860
+      }
+    ],
+    "1.4 Write unit tests for plan construction and accessors": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696338624
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697224521
+      }
+    ],
+    "2.1 Implement `exchange_indexed`": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696340367
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697225180
+      }
+    ],
+    "2.2 Write property test for indexed exchange round-trip": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696342100
+      }
+    ],
+    "2.3 Write property test for empty/neighborless no-op": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696343733
+      }
+    ],
+    "2.4 Write property test for layer-subset exactness": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696345810
+      }
+    ],
+    "2.5 Write property test for neighbor-order independence": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696347602
+      }
+    ],
+    "2.6 Write property test for idempotence with fixed owned state": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696349109
+      }
+    ],
+    "2.7 Write unit/example tests for exchange infrastructure paths": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696350587
+      }
+    ],
+    "3. Checkpoint - HALO indexed exchange": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696351877
+      }
+    ],
+    "4.1 Write multi-rank MPI integration test": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696353285
+      }
+    ],
+    "4.2 Write device-view round-trip integration test": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696354555
+      }
+    ],
+    "5.1 Extend the `dycore_init` C API signature with marshalled topology": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696355747
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696390161
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697201687
+      }
+    ],
+    "5.2 Implement `dycore_fortran_shim.F90` extraction and marshalling": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696356957
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697225849
+      }
+    ],
+    "5.3 Write property test for 1-based to 0-based conversion": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696358158
+      }
+    ],
+    "5.4 Write unit tests for the marshalling conversion helper": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696359331
+      }
+    ],
+    "5.5 Write integration test for marshalling against a small MPAS partition": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696360501
+      }
+    ],
+    "6.1 Extend `HaloTopology` and `HaloNeighborInfo` with per-layer index lists": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696361672
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696391568
+      },
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784697204608
+      }
+    ],
+    "6.2 Build one `Indexed_Halo_Plan` per element kind and add element-kind mapping": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696362835
+      }
+    ],
+    "6.3 Make `exchange(group_name)` honor element kind, time level, and layer subset": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696364026
+      }
+    ],
+    "6.4 Write property test for Halo_Manager plan construction": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696365247
+      }
+    ],
+    "6.5 Write unit tests for group exchange behavior": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696366448
+      }
+    ],
+    "7. Checkpoint - marshalling and Halo_Manager": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696367630
+      }
+    ],
+    "8.1 Reconstruct `HaloTopology` from marshalled arrays in `dycore_init`": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696368821
+      }
+    ],
+    "8.2 Construct the `Halo_Manager` and attach it to `AdvanceDomain`": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696370012
+      }
+    ],
+    "8.3 Write smoke test for wiring": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696371194
+      }
+    ],
+    "9.1 Build the dycore incrementally and fix compile errors": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696372366
+      }
+    ],
+    "9.2 Run the 48-rank JW validation and compare against the Fortran reference": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696373567
+      }
+    ],
+    "9.3 Confirm finiteness and single-rank stability": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696374760
+      }
+    ],
+    "9.4 Confirm interface stability": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696375880
+      }
+    ],
+    "10. Final checkpoint - full parity": [
+      {
+        "executionId": "2400e3bb-f4e3-4108-b682-a6eb5adff405",
+        "chatSessionId": "sess_8e05f4df-6517-48c7-8a17-145cd807cbeb",
+        "timestamp": 1784696377052
+      }
+    ]
+  }
+}

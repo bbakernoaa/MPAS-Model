@@ -17,27 +17,10 @@
 #include <cstdio>
 #include <mpi.h>
 
-inline void dyn_debug_log(const char* format, ...) {
-  char buf[512];
-  va_list args;
-  va_start(args, format);
-  vsprintf(buf, format, args);
-  va_end(args);
-
-  int rank = 0;
-  int mpi_init = 0;
-  MPI_Initialized(&mpi_init);
-  if (mpi_init) {
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  }
-  char path[512];
-  sprintf(path, "/gpfs/f6/bil-fire3/scratch/Barry.Baker/models/MPAS-Model/build/jw_validation_run/cpp_run/cpp_debug_rank_%d.log", rank);
-  FILE* f = fopen(path, "a");
-  if (f) {
-    fprintf(f, "%s", buf);
-    fclose(f);
-  }
-}
+// Debug tracing hook, disabled for production (previously appended to a
+// hard-coded per-rank log file on every call). Kept as a no-op so existing
+// call sites compile unchanged.
+inline void dyn_debug_log(const char* /*format*/, ...) {}
 
 namespace mpas {
 namespace dycore {
@@ -65,6 +48,14 @@ struct DynTendParams {
   // Curvature terms
   bool curvature_enabled = false;
   Scalar omega = 7.29212e-5;  // Earth's angular velocity
+
+  // Horizontal mixing / dissipation (2d Smagorinsky del2 + del4 background filter)
+  bool mixing_enabled = false;         // whether to compute horizontal mixing (rk_step==1)
+  Scalar c_s = 0.125;                  // config_smagorinsky_coef
+  Scalar config_len_disp = 0.0;        // horizontal filter length scale (=nominalMinDc) [m]
+  Scalar config_visc4_2dsmag = 0.05;   // del4 background coefficient
+  Scalar config_del4u_div_factor = 10.0; // scaling of divergent part of del4 u filter
+  Scalar prandtl_inv = 1.0;            // 1/Prandtl for theta/scalar filtering
 };
 
 /// Mesh connectivity and geometry required by Dyn_Tend_Module.
@@ -120,6 +111,16 @@ struct DynTendMeshData {
   View1D<Scalar> angleEdge;       // (nEdges)
   View1D<Scalar> u_init;          // (nVertLevels)
   View1D<Scalar> v_init;          // (nVertLevels)
+
+  // Dissipation / horizontal-mixing related (2d Smagorinsky del2 + del4)
+  // (verticesOnEdge is already declared above in the connectivity section)
+  View2D<Scalar> edgesOnVertex_sign; // (vertexDegree, nVertices)
+  View1D<Scalar> invAreaTriangle;   // (nVertices)
+  View1D<Scalar> meshScalingDel2;   // (nEdges)
+  View1D<Scalar> meshScalingDel4;   // (nEdges)
+  View2D<Scalar> deformation_coef_c2; // (maxEdges, nCells)
+  View2D<Scalar> deformation_coef_s2; // (maxEdges, nCells)
+  View2D<Scalar> deformation_coef_cs; // (maxEdges, nCells)
 };
 
 /// Input state fields required by Dyn_Tend_Module.
@@ -142,10 +143,12 @@ struct DynTendState {
   View2D<Scalar> ke;            // (nVertLevels, nCells) - kinetic energy
   View2D<Scalar> pv_edge;       // (nVertLevels, nEdges) - potential vorticity
   View2D<Scalar> divergence;    // (nVertLevels, nCells)
+  View2D<Scalar> vorticity;     // (nVertLevels, nVertices) - relative vorticity (for u mixing)
   View2D<Scalar> pp;            // (nVertLevels, nCells) - pressure perturbation
   View2D<Scalar> rb;            // (nVertLevels, nCells) - base-state density
   View2D<Scalar> rr;            // (nVertLevels, nCells) - density perturbation
   View2D<Scalar> rr_save;       // (nVertLevels, nCells) - saved density pert
+  View2D<Scalar> qtot;          // (nVertLevels, nCells) - total water mixing ratio
   View2D<Scalar> exner;         // (nVertLevels, nCells) - Exner function
   View2D<Scalar> pressure_b;    // (nVertLevels, nCells) - base pressure
   View2D<Scalar> rt_diabatic_tend; // (nVertLevels, nCells)
@@ -317,6 +320,7 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
   const auto pp = state.pp;
   const auto rb = state.rb;
   const auto rr_save = state.rr_save;
+  const auto qtot = state.qtot;
   const auto rt_diabatic_tend = state.rt_diabatic_tend;
   const auto theta_m_save = state.theta_m_save;
   const auto ru_save = state.ru_save;
@@ -416,11 +420,16 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
           tend_rho(k, iCell) = -h_divergence(k, iCell)
               - rdzw(k) * (rw(k + 1, iCell) - rw(k, iCell))
               + tend_rho_physics(k, iCell);
-          // Buoyancy/pressure gradient for w equation
-          // dpdz = -g * (rb*(qtot) + rr_save*(1+qtot))
-          // Simplified: using rr_save directly as in Reference_Model
+          // Buoyancy term for the w equation, exactly as the Reference_Model
+          // (atm_compute_dyn_tend): dpdz = -g*(rb*qtot + rr_save*(1+qtot)).
+          // qtot is the total water mixing ratio computed once per timestep in
+          // compute_moist_coefficients (matches Fortran's shared qtot array).
+          // (The previous code used -g*(rb + rr_save), i.e. it added the full
+          // base density as buoyancy, producing a spurious O(g*rho_base) term
+          // that drove the w equation unstable.)
           dpdz(k, iCell) = -constants::gravity *
-              (rb(k, iCell) + rr_save(k, iCell));
+              (rb(k, iCell) * qtot(k, iCell)
+               + rr_save(k, iCell) * (Scalar(1.0) + qtot(k, iCell)));
         });
     Kokkos::fence("dyn_tend::tend_rho_dpdz_fence");
   }
@@ -584,6 +593,275 @@ void Dyn_Tend_Module<ExecSpace>::compute_dyn_tend(
         });
     Kokkos::fence("dyn_tend::rayleigh_damp_fence");
   }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // Horizontal mixing / dissipation (Reference_Model u_dissipation_3d,
+  // w_dissipation_3d, scalar_dissipation_3d_les with les_model_opt == NONE and
+  // config_horiz_mixing == "2d_smagorinsky"): 2-D Smagorinsky del^2 mixing plus
+  // del^4 background hyperdiffusion for u, w, and theta_m.  Mixing terms are
+  // forward-Euler integrated, so they are computed only on the first RK substep
+  // and cached in tend_*_euler for reuse in substeps 2 and 3.  This block runs
+  // before tend_u_euler/tend_w_euler/tend_theta_euler are folded into the total
+  // tendencies (add_euler_phys_u below, add_euler_w and add_euler_phys_theta
+  // later), matching the Reference_Model ordering.
+  // ════════════════════════════════════════════════════════════════════════════
+  if (rk_step == 1 && params.mixing_enabled) {
+    const int nVertices = params.nVertices;
+    const int vertexDegree = params.vertexDegree;
+    const auto v = state.v;
+    const auto vorticity = state.vorticity;
+    const auto verticesOnEdge = mesh.verticesOnEdge;
+    const auto edgesOnVertex = mesh.edgesOnVertex;
+    const auto edgesOnVertex_sign = mesh.edgesOnVertex_sign;
+    const auto invAreaTriangle = mesh.invAreaTriangle;
+    const auto invDvEdge = mesh.invDvEdge;
+    const auto dcEdge = mesh.dcEdge;
+    const auto meshScalingDel2 = mesh.meshScalingDel2;
+    const auto meshScalingDel4 = mesh.meshScalingDel4;
+    const auto def_c2 = mesh.deformation_coef_c2;
+    const auto def_s2 = mesh.deformation_coef_s2;
+    const auto def_cs = mesh.deformation_coef_cs;
+
+    const Scalar c_s = params.c_s;
+    const Scalar len_disp = params.config_len_disp;
+    const Scalar invDt = Scalar(1.0) / params.dt;
+    const Scalar smag_coeff = (c_s * len_disp) * (c_s * len_disp);
+    const Scalar stability_limit = Scalar(0.01) * len_disp * len_disp * invDt;
+    const Scalar h_mom_eddy_visc4 =
+        params.config_visc4_2dsmag * len_disp * len_disp * len_disp;
+    const Scalar h_theta_eddy_visc4 = h_mom_eddy_visc4;
+    const Scalar del4u_div_factor = params.config_del4u_div_factor;
+    const Scalar prandtl_inv = params.prandtl_inv;
+
+    // ── 2-D Smagorinsky horizontal eddy viscosity (kdiff = eddy_visc_horz) ──
+    view2d eddy_visc_horz("eddy_visc_horz", nVertLevels, nCells);
+    Kokkos::parallel_for(
+        "dyn_tend::smagorinsky_2d",
+        Kokkos::RangePolicy<exec_space>(0, nCells),
+        KOKKOS_LAMBDA(const int iCell) {
+          const int ne = nEdgesOnCell_v(iCell);
+          for (int k = 0; k < nVertLevels; ++k) {
+            Scalar dudx = Scalar(0.0), dudy = Scalar(0.0);
+            Scalar dvdx = Scalar(0.0), dvdy = Scalar(0.0);
+            for (int i = 0; i < ne; ++i) {
+              const int ie = edgesOnCell(i, iCell) - 1;
+              const Scalar c2 = def_c2(i, iCell);
+              const Scalar s2 = def_s2(i, iCell);
+              const Scalar cs = def_cs(i, iCell);
+              const Scalar uu = u(k, ie);
+              const Scalar vv = v(k, ie);
+              dudx += c2 * uu - cs * vv;
+              dudy += cs * uu - s2 * vv;
+              dvdx += cs * uu + c2 * vv;
+              dvdy += s2 * uu + cs * vv;
+            }
+            const Scalar d_11 = Scalar(2.0) * dudx;
+            const Scalar d_22 = Scalar(2.0) * dvdy;
+            const Scalar d_12 = dudy + dvdx;
+            Scalar visc = smag_coeff * Kokkos::sqrt(
+                Scalar(0.25) * (d_11 - d_22) * (d_11 - d_22) + d_12 * d_12);
+            visc = Kokkos::fmin(visc, stability_limit);
+            eddy_visc_horz(k, iCell) = visc;
+          }
+        });
+    Kokkos::fence("dyn_tend::smagorinsky_2d_fence");
+
+    // ── u dissipation: del^2 (Smagorinsky) into tend_u_euler, and cache
+    //    delsq_u for the del^4 filter (u_dissipation_3d) ──
+    view2d delsq_u("delsq_u", nVertLevels, nEdges);
+    Kokkos::parallel_for(
+        "dyn_tend::u_diss_del2",
+        Kokkos::RangePolicy<exec_space>(0, nEdges),
+        KOKKOS_LAMBDA(const int iEdge) {
+          const int cell1 = cellsOnEdge(0, iEdge) - 1;
+          const int cell2 = cellsOnEdge(1, iEdge) - 1;
+          const int vertex1 = verticesOnEdge(0, iEdge) - 1;
+          const int vertex2 = verticesOnEdge(1, iEdge) - 1;
+          const Scalar r_dc = invDcEdge(iEdge);
+          const Scalar r_dv =
+              Kokkos::fmin(invDvEdge(iEdge), Scalar(4.0) * invDcEdge(iEdge));
+          const Scalar mSd2 = meshScalingDel2(iEdge);
+          for (int k = 0; k < nVertLevels; ++k) {
+            const Scalar u_diffusion =
+                (divergence(k, cell2) - divergence(k, cell1)) * r_dc
+              - (vorticity(k, vertex2) - vorticity(k, vertex1)) * r_dv;
+            delsq_u(k, iEdge) = u_diffusion;
+            const Scalar kdiffu = Scalar(0.5) *
+                (eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2));
+            tend_u_euler(k, iEdge) +=
+                rho_edge(k, iEdge) * kdiffu * u_diffusion * mSd2;
+          }
+        });
+    Kokkos::fence("dyn_tend::u_diss_del2_fence");
+
+    if (h_mom_eddy_visc4 > Scalar(0.0)) {  // del^4 filter for u
+      view2d delsq_vort("delsq_vort", nVertLevels, nVertices);
+      view2d delsq_div("delsq_div", nVertLevels, nCells);
+      Kokkos::parallel_for(
+          "dyn_tend::u_diss_delsq_vort",
+          Kokkos::RangePolicy<exec_space>(0, nVertices),
+          KOKKOS_LAMBDA(const int iVertex) {
+            for (int k = 0; k < nVertLevels; ++k) {
+              Scalar acc = Scalar(0.0);
+              for (int i = 0; i < vertexDegree; ++i) {
+                const int iEdge = edgesOnVertex(i, iVertex) - 1;
+                const Scalar edge_sign = invAreaTriangle(iVertex) *
+                    dcEdge(iEdge) * edgesOnVertex_sign(i, iVertex);
+                acc += edge_sign * delsq_u(k, iEdge);
+              }
+              delsq_vort(k, iVertex) = acc;
+            }
+          });
+      Kokkos::parallel_for(
+          "dyn_tend::u_diss_delsq_div",
+          Kokkos::RangePolicy<exec_space>(0, nCells),
+          KOKKOS_LAMBDA(const int iCell) {
+            const Scalar r = invAreaCell(iCell);
+            const int ne = nEdgesOnCell_v(iCell);
+            for (int k = 0; k < nVertLevels; ++k) {
+              Scalar acc = Scalar(0.0);
+              for (int i = 0; i < ne; ++i) {
+                const int iEdge = edgesOnCell(i, iCell) - 1;
+                const Scalar edge_sign =
+                    r * dvEdge(iEdge) * edgesOnCell_sign(i, iCell);
+                acc += edge_sign * delsq_u(k, iEdge);
+              }
+              delsq_div(k, iCell) = acc;
+            }
+          });
+      Kokkos::fence("dyn_tend::u_diss_delsq_fence");
+      Kokkos::parallel_for(
+          "dyn_tend::u_diss_del4",
+          Kokkos::RangePolicy<exec_space>(0, nEdges),
+          KOKKOS_LAMBDA(const int iEdge) {
+            const int cell1 = cellsOnEdge(0, iEdge) - 1;
+            const int cell2 = cellsOnEdge(1, iEdge) - 1;
+            const int vertex1 = verticesOnEdge(0, iEdge) - 1;
+            const int vertex2 = verticesOnEdge(1, iEdge) - 1;
+            const Scalar u_mix_scale = meshScalingDel4(iEdge) * h_mom_eddy_visc4;
+            const Scalar r_dc = u_mix_scale * del4u_div_factor * invDcEdge(iEdge);
+            const Scalar r_dv = u_mix_scale *
+                Kokkos::fmin(invDvEdge(iEdge), Scalar(4.0) * invDcEdge(iEdge));
+            for (int k = 0; k < nVertLevels; ++k) {
+              const Scalar u_diffusion = rho_edge(k, iEdge) * (
+                  (delsq_div(k, cell2) - delsq_div(k, cell1)) * r_dc
+                - (delsq_vort(k, vertex2) - delsq_vort(k, vertex1)) * r_dv);
+              tend_u_euler(k, iEdge) -= u_diffusion;
+            }
+          });
+      Kokkos::fence("dyn_tend::u_diss_del4_fence");
+    }
+
+    // ── w dissipation (w_dissipation_3d): zero tend_w_euler, then del^2 +
+    //    del^4.  Zeroing here (before the pressure-gradient/buoyancy term is
+    //    added in tend_w_vadv_pgf) mirrors the Reference_Model. ──
+    view2d delsq_w("delsq_w", nVertLevels, nCells);
+    Kokkos::parallel_for(
+        "dyn_tend::w_diss_del2",
+        Kokkos::RangePolicy<exec_space>(0, nCells),
+        KOKKOS_LAMBDA(const int iCell) {
+          for (int k = 0; k < nVertLevels; ++k) delsq_w(k, iCell) = Scalar(0.0);
+          for (int k = 0; k <= nVertLevels; ++k) tend_w_euler(k, iCell) = Scalar(0.0);
+          const Scalar r_areaCell = invAreaCell(iCell);
+          const int ne = nEdgesOnCell_v(iCell);
+          for (int i = 0; i < ne; ++i) {
+            const int iEdge = edgesOnCell(i, iCell) - 1;
+            const Scalar edge_sign = Scalar(0.5) * r_areaCell *
+                edgesOnCell_sign(i, iCell) * dvEdge(iEdge) * invDcEdge(iEdge);
+            const int cell1 = cellsOnEdge(0, iEdge) - 1;
+            const int cell2 = cellsOnEdge(1, iEdge) - 1;
+            const Scalar mSd2 = meshScalingDel2(iEdge);
+            for (int k = 1; k < nVertLevels; ++k) {
+              Scalar wtf = edge_sign *
+                  (rho_edge(k, iEdge) + rho_edge(k - 1, iEdge)) *
+                  (w(k, cell2) - w(k, cell1));
+              delsq_w(k, iCell) += wtf;
+              wtf = wtf * mSd2 * Scalar(0.25) * (
+                  eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2)
+                + eddy_visc_horz(k - 1, cell1) + eddy_visc_horz(k - 1, cell2));
+              tend_w_euler(k, iCell) += wtf;
+            }
+          }
+        });
+    Kokkos::fence("dyn_tend::w_diss_del2_fence");
+
+    if (h_mom_eddy_visc4 > Scalar(0.0)) {  // del^4 filter for w
+      Kokkos::parallel_for(
+          "dyn_tend::w_diss_del4",
+          Kokkos::RangePolicy<exec_space>(0, nCells),
+          KOKKOS_LAMBDA(const int iCell) {
+            const Scalar r_areaCell = h_mom_eddy_visc4 * invAreaCell(iCell);
+            const int ne = nEdgesOnCell_v(iCell);
+            for (int i = 0; i < ne; ++i) {
+              const int iEdge = edgesOnCell(i, iCell) - 1;
+              const int cell1 = cellsOnEdge(0, iEdge) - 1;
+              const int cell2 = cellsOnEdge(1, iEdge) - 1;
+              const Scalar edge_sign = meshScalingDel4(iEdge) * r_areaCell *
+                  dvEdge(iEdge) * edgesOnCell_sign(i, iCell) * invDcEdge(iEdge);
+              for (int k = 1; k < nVertLevels; ++k) {
+                tend_w_euler(k, iCell) -=
+                    edge_sign * (delsq_w(k, cell2) - delsq_w(k, cell1));
+              }
+            }
+          });
+      Kokkos::fence("dyn_tend::w_diss_del4_fence");
+    }
+
+    // ── theta_m dissipation (scalar_dissipation_3d_les): zero tend_theta_euler,
+    //    then del^2 + del^4. ──
+    view2d delsq_theta("delsq_theta", nVertLevels, nCells);
+    Kokkos::parallel_for(
+        "dyn_tend::theta_diss_del2",
+        Kokkos::RangePolicy<exec_space>(0, nCells),
+        KOKKOS_LAMBDA(const int iCell) {
+          for (int k = 0; k < nVertLevels; ++k) {
+            delsq_theta(k, iCell) = Scalar(0.0);
+            tend_theta_euler(k, iCell) = Scalar(0.0);
+          }
+          const Scalar r_areaCell = invAreaCell(iCell);
+          const int ne = nEdgesOnCell_v(iCell);
+          for (int i = 0; i < ne; ++i) {
+            const int iEdge = edgesOnCell(i, iCell) - 1;
+            const Scalar edge_sign = r_areaCell *
+                edgesOnCell_sign(i, iCell) * dvEdge(iEdge) * invDcEdge(iEdge);
+            const Scalar pr_scale = prandtl_inv * meshScalingDel2(iEdge);
+            const int cell1 = cellsOnEdge(0, iEdge) - 1;
+            const int cell2 = cellsOnEdge(1, iEdge) - 1;
+            for (int k = 0; k < nVertLevels; ++k) {
+              Scalar ttf = edge_sign *
+                  (theta_m(k, cell2) - theta_m(k, cell1)) * rho_edge(k, iEdge);
+              delsq_theta(k, iCell) += ttf;
+              ttf = ttf * Scalar(0.5) *
+                  (eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2)) * pr_scale;
+              tend_theta_euler(k, iCell) += ttf;
+            }
+          }
+        });
+    Kokkos::fence("dyn_tend::theta_diss_del2_fence");
+
+    if (h_theta_eddy_visc4 > Scalar(0.0)) {  // del^4 filter for theta_m
+      Kokkos::parallel_for(
+          "dyn_tend::theta_diss_del4",
+          Kokkos::RangePolicy<exec_space>(0, nCells),
+          KOKKOS_LAMBDA(const int iCell) {
+            const Scalar r_areaCell =
+                h_theta_eddy_visc4 * prandtl_inv * invAreaCell(iCell);
+            const int ne = nEdgesOnCell_v(iCell);
+            for (int i = 0; i < ne; ++i) {
+              const int iEdge = edgesOnCell(i, iCell) - 1;
+              const int cell1 = cellsOnEdge(0, iEdge) - 1;
+              const int cell2 = cellsOnEdge(1, iEdge) - 1;
+              const Scalar edge_sign = meshScalingDel4(iEdge) * r_areaCell *
+                  dvEdge(iEdge) * edgesOnCell_sign(i, iCell) * invDcEdge(iEdge);
+              for (int k = 0; k < nVertLevels; ++k) {
+                tend_theta_euler(k, iCell) -=
+                    edge_sign * (delsq_theta(k, cell2) - delsq_theta(k, cell1));
+              }
+            }
+          });
+      Kokkos::fence("dyn_tend::theta_diss_del4_fence");
+    }
+  }  // end horizontal mixing (rk_step == 1)
 
   // ════════════════════════════════════════════════════════════════════════════
   // Add mixing (Euler) tendencies and physics tendency for u (Req 6.5, 6.7)

@@ -111,7 +111,13 @@ TEST(DimensionValidationProperty, InvalidDimensionsReturnErrorCode2) {
         bufs.dptr(), bufs.dptr(),
         /* config */ 3, 6, 1, 1, 1, 0, 0, 0, 0,
         0.1, 120000.0, 0.0, 1,
-        /* mpi_comm_fortran */ 0);
+        /* mpi_comm_fortran */ 0,
+        /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
 
     ASSERT_EQ(rc, 2)
         << "Iteration " << iter << ": dycore_init should return error code 2 "
@@ -161,7 +167,13 @@ TEST(DimensionValidationProperty, EachDimensionIndependentlyValidated) {
         bufs.dptr(), bufs.dptr(),
         3, 6, 1, 1, 1, 0, 0, 0, 0,
         0.1, 120000.0, 0.0, 1,
-        /* mpi_comm_fortran */ 0);
+        /* mpi_comm_fortran */ 0,
+        /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
 
     EXPECT_EQ(rc, 2)
         << "dycore_init should return 2 for invalid dimension: " << tc.description;

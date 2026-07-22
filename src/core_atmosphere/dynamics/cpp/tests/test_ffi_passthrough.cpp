@@ -136,7 +136,13 @@ TEST(FFIPassthrough, DimensionValidationRejectsCorruptedValues) {
         nullptr, nullptr,
         3, 6, 1, 1, 1, 0, 0, 0, 0,
         0.1, 120000.0, 0.0, 1,
-        /* mpi_comm_fortran */ 0);
+        /* mpi_comm_fortran */ 0,
+        /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
 
     // The C API validates dimensions FIRST (before null checks).
     // Error code 2 = invalid dimensions detected.
@@ -187,7 +193,13 @@ TEST(FFIPassthrough, ValidDimensionsAcceptedByValidation) {
         nullptr, nullptr,
         3, 6, 1, 1, 1, 0, 0, 0, 0,
         0.1, 120000.0, 0.0, 1,
-        /* mpi_comm_fortran */ 0);
+        /* mpi_comm_fortran */ 0,
+        /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
 
     // Should pass dimension validation (not return 2).
     // Expected: returns 3 (null pointer check) since we passed nullptr arrays.
@@ -265,7 +277,13 @@ TEST(FFIPassthrough, ConfigScalarsPassThroughFFI) {
         config_apply_lbcs, config_mix_full,
         config_iau, gpu_aware_comm,
         0.1, 120000.0, 0.0, 1,
-        /* mpi_comm_fortran */ 0);
+        /* mpi_comm_fortran */ 0,
+        /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
 
     // Should pass dimension validation but fail on null pointers.
     // If config values crashed or corrupted the call, we wouldn't get here.
@@ -356,7 +374,13 @@ TEST_F(FFIPassthroughLifecycle, FullInitFinalizeWithRandomScalars) {
       config_apply_lbcs, config_mix_full,
       config_iau, gpu_aware_comm,
       0.1, 120000.0, 0.0, 1,
-      /* mpi_comm_fortran */ 0);
+      /* mpi_comm_fortran */ 0,
+      /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+      /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+      /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+      /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+      /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+      /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
 
   ASSERT_EQ(rc, 0)
       << "dycore_init with random valid scalars should succeed. "

@@ -67,6 +67,7 @@ module mpas_dycore_interface
     !> @param mpi_comm_fortran  Fortran MPI communicator handle
     function dycore_init( &
         nCells, nEdges, nVertices, nVertLevels, maxEdges, num_scalars, &
+        nCellsSolve, nEdgesSolve, &
         cellsOnEdge, edgesOnCell, verticesOnEdge, nEdgesOnCell_ptr, &
         dvEdge, dcEdge, areaCell, zgrid, zz, fzm, fzp, &
         u_tl1, u_tl2, w_tl1, w_tl2, &
@@ -86,6 +87,8 @@ module mpas_dycore_interface
       integer(c_int), value, intent(in) :: nVertLevels
       integer(c_int), value, intent(in) :: maxEdges
       integer(c_int), value, intent(in) :: num_scalars
+      integer(c_int), value, intent(in) :: nCellsSolve
+      integer(c_int), value, intent(in) :: nEdgesSolve
       integer(c_int), intent(in) :: cellsOnEdge(*)
       integer(c_int), intent(in) :: edgesOnCell(*)
       integer(c_int), intent(in) :: verticesOnEdge(*)

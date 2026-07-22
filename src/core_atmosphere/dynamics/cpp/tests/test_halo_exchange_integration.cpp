@@ -78,13 +78,30 @@ Config make_gpu_aware_config() {
 ///
 /// After exchange, the recv region contains a copy of the send region.
 ///
+/// Build a HaloNeighborInfo for a neighbor exchanging `count` elements.
+///
+/// The elements are placed in a single halo layer as indices [0, count).
+/// The contiguous Halo_Plan path only consumes the total index count, so the
+/// specific index values are immaterial for this self-communication test.
+HaloNeighborInfo make_neighbor(int rank, std::size_t count) {
+  HaloNeighborInfo info;
+  info.rank = rank;
+  std::vector<std::size_t> layer;
+  layer.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    layer.push_back(i);
+  }
+  info.layers.push_back(std::move(layer));
+  return info;
+}
+
 /// @param n_exchange Number of elements to send/receive (must match).
 HaloTopology make_self_topology(std::size_t n_exchange) {
   HaloTopology topo;
-  topo.cell_send_neighbors = {{0, n_exchange}};
-  topo.cell_recv_neighbors = {{0, n_exchange}};
-  topo.edge_send_neighbors = {{0, n_exchange}};
-  topo.edge_recv_neighbors = {{0, n_exchange}};
+  topo.cell_send_neighbors = {make_neighbor(0, n_exchange)};
+  topo.cell_recv_neighbors = {make_neighbor(0, n_exchange)};
+  topo.edge_send_neighbors = {make_neighbor(0, n_exchange)};
+  topo.edge_recv_neighbors = {make_neighbor(0, n_exchange)};
   return topo;
 }
 
@@ -485,8 +502,8 @@ TEST_F(HaloExchangeMultiRankTest, TwoRankExchangeOwnerValues) {
 
   // Topology: exchange kExchangeElements with the neighbor.
   HaloTopology topo;
-  topo.cell_send_neighbors = {{neighbor, kExchangeElements}};
-  topo.cell_recv_neighbors = {{neighbor, kExchangeElements}};
+  topo.cell_send_neighbors = {make_neighbor(neighbor, kExchangeElements)};
+  topo.cell_recv_neighbors = {make_neighbor(neighbor, kExchangeElements)};
 
   Domain domain(store, MPI_COMM_WORLD, topo);
   auto config = make_host_staged_config();

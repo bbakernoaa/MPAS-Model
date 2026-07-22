@@ -36,16 +36,31 @@
 namespace mpas {
 namespace dycore {
 
-/// @brief Halo topology information for a single mesh element type
-/// (cells, edges, or vertices).
+/// @brief Halo topology information for a single neighbor of one mesh element
+/// type (cells, edges, or vertices).
 ///
-/// Describes the send/receive neighbor relationships and element counts
-/// for one element kind. This information originates from the MPAS partition
+/// Describes the send/receive relationship with a single neighbor rank,
+/// organized by halo layer. `layers[l]` holds the 0-based local indices for
+/// halo layer `l` (layer index `l` corresponds to MPAS halo layer `l + 1`).
+/// For a send neighbor these are the owned indices to gather; for a receive
+/// neighbor they are the halo indices to fill. A neighbor with empty layers
+/// exchanges zero elements. This information originates from the MPAS partition
 /// decomposition (`mpas_dmpar` module) and is passed to the C++ dycore
 /// during initialization.
 struct HaloNeighborInfo {
-  int rank = 0;            ///< MPI rank of the neighbor.
-  std::size_t count = 0;   ///< Number of elements to exchange with this neighbor.
+  int rank = 0;  ///< MPI rank of the neighbor.
+  /// Per-layer 0-based local index lists. `layers[l]` is the ordered index
+  /// list for halo layer `l`.
+  std::vector<std::vector<std::size_t>> layers;
+
+  /// @brief Total number of indices across all halo layers.
+  [[nodiscard]] std::size_t total_indices() const noexcept {
+    std::size_t total = 0;
+    for (const auto& layer : layers) {
+      total += layer.size();
+    }
+    return total;
+  }
 };
 
 /// @brief Complete halo topology for constructing Halo_Plans.
@@ -204,7 +219,7 @@ inline std::vector<halo::Neighbor_Info> Halo_Manager::to_halo_neighbors(
   std::vector<halo::Neighbor_Info> result;
   result.reserve(infos.size());
   for (const auto& info : infos) {
-    result.push_back(halo::Neighbor_Info{info.rank, info.count});
+    result.push_back(halo::Neighbor_Info{info.rank, info.total_indices()});
   }
   return result;
 }

@@ -11,7 +11,7 @@ using FieldStore = mpas::dycore::Field_Store<Scalar, ExecSpace>;
 // Static mock registry to store allocated arrays for the tests
 static std::unordered_map<std::string, std::vector<double>> g_mock_fortran_memory;
 
-// In this test file, our custom mpas_cpp_get_pointer implementation overrides 
+// In this test file, our custom mpas_cpp_get_pointer implementation overrides
 // the weak stub defined in dycore_c_api.cpp.
 extern "C" {
   void* mpas_cpp_get_pointer(const char* pool_name, const char* var_name, int dim_num, int time_level) {
@@ -42,7 +42,13 @@ TEST(DynamicBindingsTest, RegistryAndWrappingSucceeds) {
       dummy_state.data(), dummy_state.data(),
       3, 4, 1, 0, 1, 0, 0, 0, 0,
       0.1, 120000.0, 0.0, 1,
-      0
+      0,
+      /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+      /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+      /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+      /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+      /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+      /* vertex recv */ 0, 0, nullptr, nullptr, nullptr
   );
 
   EXPECT_EQ(rc, 0);

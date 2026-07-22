@@ -76,6 +76,24 @@ extern "C" {
  * @param gpu_aware_comm          GPU-aware MPI flag (0/1).
  * @param mpi_comm_fortran  Fortran MPI communicator handle (converted via MPI_Comm_f2c).
  *
+ * Marshalled halo topology (Req 7.5).  For each element kind (cell, edge,
+ * vertex) and direction (send, recv), the MPAS exchange lists are flattened by
+ * the Fortran shim into a CSR-style description that this entry point accepts
+ * as plain C arrays.  For a given (kind, direction) group:
+ *   - <kind>_<dir>_n_neighbors : number of neighbor ranks in this direction.
+ *   - <kind>_<dir>_n_layers    : number of halo layers.
+ *   - <kind>_<dir>_neighbor_ranks : int[n_neighbors] neighbor MPI ranks.
+ *   - <kind>_<dir>_layer_counts   : int[n_neighbors * n_layers] index count for
+ *                                   each (neighbor, layer), row-major by neighbor
+ *                                   then layer.
+ *   - <kind>_<dir>_indices        : int[sum(layer_counts)] concatenated 0-based
+ *                                   local indices; slices are delimited by the
+ *                                   prefix sum of layer_counts.
+ * An empty direction is signalled by n_neighbors == 0 (the pointer arguments may
+ * then be null).  Indices are already converted to 0-based by the marshaller.
+ * NOTE: This entry point currently only accepts these arrays; reconstruction of
+ * the HaloTopology from them is performed in a later step.
+ *
  * @return 0 on success, non-zero error code on failure:
  *   - 1: Kokkos initialization failed
  *   - 2: Invalid dimensions (nVertLevels <= 0, nCells <= 0, etc.)
@@ -84,7 +102,7 @@ extern "C" {
 int dycore_init(
     /* Mesh dimensions */
     int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges,
-    int num_scalars,
+    int num_scalars, int nCellsSolve, int nEdgesSolve,
     /* Mesh geometry / connectivity pointers */
     int* cellsOnEdge, int* edgesOnCell, int* verticesOnEdge,
     int* nEdgesOnCell_ptr,
@@ -105,7 +123,31 @@ int dycore_init(
     double config_smdiv, double config_len_disp,
     double config_apvm_upwinding, int config_hollingsworth,
     /* MPI */
-    int mpi_comm_fortran);
+    int mpi_comm_fortran,
+    /* Marshalled halo topology: cell send */
+    int cell_send_n_neighbors, int cell_send_n_layers,
+    int* cell_send_neighbor_ranks, int* cell_send_layer_counts,
+    int* cell_send_indices,
+    /* Marshalled halo topology: cell recv */
+    int cell_recv_n_neighbors, int cell_recv_n_layers,
+    int* cell_recv_neighbor_ranks, int* cell_recv_layer_counts,
+    int* cell_recv_indices,
+    /* Marshalled halo topology: edge send */
+    int edge_send_n_neighbors, int edge_send_n_layers,
+    int* edge_send_neighbor_ranks, int* edge_send_layer_counts,
+    int* edge_send_indices,
+    /* Marshalled halo topology: edge recv */
+    int edge_recv_n_neighbors, int edge_recv_n_layers,
+    int* edge_recv_neighbor_ranks, int* edge_recv_layer_counts,
+    int* edge_recv_indices,
+    /* Marshalled halo topology: vertex send */
+    int vertex_send_n_neighbors, int vertex_send_n_layers,
+    int* vertex_send_neighbor_ranks, int* vertex_send_layer_counts,
+    int* vertex_send_indices,
+    /* Marshalled halo topology: vertex recv */
+    int vertex_recv_n_neighbors, int vertex_recv_n_layers,
+    int* vertex_recv_neighbor_ranks, int* vertex_recv_layer_counts,
+    int* vertex_recv_indices);
 
 /**
  * @brief Advance the dycore by one timestep.

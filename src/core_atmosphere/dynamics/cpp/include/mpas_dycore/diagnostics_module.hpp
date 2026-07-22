@@ -256,27 +256,10 @@ void Diagnostics_Module<ExecSpace>::compute_solve_diagnostics(
     bool hollingsworth,
     int rk_step) const {
 
-  auto diag_debug_log = [](const char* format, ...) {
-    char buf[512];
-    va_list args;
-    va_start(args, format);
-    std::vsprintf(buf, format, args);
-    va_end(args);
-
-    int rank = 0;
-    int mpi_init = 0;
-    MPI_Initialized(&mpi_init);
-    if (mpi_init) {
-      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    }
-    char path[512];
-    std::sprintf(path, "/gpfs/f6/bil-fire3/scratch/Barry.Baker/models/MPAS-Model/build/jw_validation_run/cpp_run/cpp_debug_rank_%d.log", rank);
-    FILE* f = std::fopen(path, "a");
-    if (f) {
-      std::fprintf(f, "%s", buf);
-      std::fclose(f);
-    }
-  };
+  // Debug tracing hook, disabled for production (previously appended to a
+  // hard-coded per-rank log file on every call). Kept as a no-op lambda so
+  // existing call sites compile unchanged.
+  auto diag_debug_log = [](const char* /*format*/, ...) {};
 
   const int nCells = mesh.nCells;
   const int nEdges = mesh.nEdges;

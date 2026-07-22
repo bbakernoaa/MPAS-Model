@@ -95,6 +95,7 @@ void acoustic_step_update_edges(
   namespace ac = acoustic_constants;
   const int nVertLevels = params.nVertLevels;
   const int nEdges = params.nEdges;
+  const int nCells = params.nCells;
   const int nCellsSolve = params.nCellsSolve;
   const Scalar dts = params.dts;
   const int small_step = params.small_step;
@@ -112,8 +113,13 @@ void acoustic_step_update_edges(
           const int cell1 = cellsOnEdge(0, iEdge) - 1;
           const int cell2 = cellsOnEdge(1, iEdge) - 1;
 
-          // Only update edges touching at least one owned cell
-          if (cell1 < nCellsSolve || cell2 < nCellsSolve) {
+          // Only update edges touching at least one owned cell, and only when
+          // both neighbour cells are in range. The second guard skips edges
+          // whose far neighbour is the boundary "sentinel" cell (index nCells,
+          // outside the wrapped view), matching the guarded reads in
+          // compute_dyn_tend / recover.
+          if ((cell1 < nCellsSolve || cell2 < nCellsSolve) &&
+              cell1 >= 0 && cell1 < nCells && cell2 >= 0 && cell2 < nCells) {
             const Scalar mask = Scalar(1.0) - specZoneMaskEdge(iEdge);
 
             for (int k = 0; k < nVertLevels; ++k) {

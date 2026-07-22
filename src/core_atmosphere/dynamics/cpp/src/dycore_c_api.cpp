@@ -28,27 +28,10 @@
 #include <cstdarg>
 #include <cstdio>
 
-inline void cpp_debug_log(const char* format, ...) {
-  char buf[512];
-  va_list args;
-  va_start(args, format);
-  vsprintf(buf, format, args);
-  va_end(args);
-
-  int rank = 0;
-  int mpi_init = 0;
-  MPI_Initialized(&mpi_init);
-  if (mpi_init) {
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  }
-  char path[512];
-  sprintf(path, "/gpfs/f6/bil-fire3/scratch/Barry.Baker/models/MPAS-Model/build/jw_validation_run/cpp_run/cpp_debug_rank_%d.log", rank);
-  FILE* f = fopen(path, "a");
-  if (f) {
-    fprintf(f, "%s", buf);
-    fclose(f);
-  }
-}
+// Debug tracing hook, disabled for production (previously appended to a
+// hard-coded per-rank log file on every call). Kept as a no-op so existing
+// call sites compile unchanged.
+inline void cpp_debug_log(const char* /*format*/, ...) {}
 
 namespace {
 
@@ -68,6 +51,8 @@ using MeshRawPointers = mpas::dycore::MeshRawPointers;
 struct DycoreContext {
   MeshDims dims{};
   int num_scalars = 0;
+  int nCellsSolve = 0;   ///< Number of owned (solve) cells; < nCells.
+  int nEdgesSolve = 0;   ///< Number of owned (solve) edges; < nEdges.
   MeshDataT mesh{};
   FieldStore state_store{};
   Config config;
@@ -133,10 +118,10 @@ struct DynFieldMetadata {
   std::string var_name;
   std::string fortran_name; // Name in MPAS Fortran pools (handles mismatches)
   std::string pool_name;
-  int dimensions;       
-  int time_levels;      
-  std::string extent_x; 
-  std::string extent_y; 
+  int dimensions;
+  int time_levels;
+  std::string extent_x;
+  std::string extent_y;
 };
 
 const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
@@ -194,6 +179,11 @@ const std::vector<DynFieldMetadata> G_DIAGNOSTIC_FIELDS = {
   {"fVertex",         "fVertex",         "mesh", 1, 0, "nVertices",   "1"},
   {"kiteAreasOnVertex", "kiteAreasOnVertex", "mesh", 2, 0, "3",           "nVertices"},
   {"edgesOnVertex_sign", "edgesOnVertex_sign", "mesh", 2, 0, "3",         "nVertices"},
+  {"meshScalingDel2", "meshScalingDel2", "mesh", 1, 0, "nEdges",       "1"},
+  {"meshScalingDel4", "meshScalingDel4", "mesh", 1, 0, "nEdges",       "1"},
+  {"deformation_coef_c2", "deformation_coef_c2", "mesh", 2, 0, "maxEdges", "nCells"},
+  {"deformation_coef_s2", "deformation_coef_s2", "mesh", 2, 0, "maxEdges", "nCells"},
+  {"deformation_coef_cs", "deformation_coef_cs", "mesh", 2, 0, "maxEdges", "nCells"},
   {"rho_base",      "rho_base",     "diag", 2, 0, "nVertLevels",   "nCells"},
   {"cofrz",         "cofrz",        "diag", 1, 0, "nVertLevels",   "1"},
   {"cofwr",         "cofwr",        "diag", 2, 0, "nVertLevels",   "nCells"},
@@ -238,7 +228,7 @@ int resolve_extent(const std::string& extent_name, int nCells, int nEdges, int n
   throw std::runtime_error("C++ Dycore: Unknown extent: " + extent_name);
 }
 
-void wrap_all_diagnostic_fields(FieldStore& store, 
+void wrap_all_diagnostic_fields(FieldStore& store,
                                 std::vector<std::string>& prognostic_field_names,
                                 int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges, int num_scalars) {
   for (const auto& meta : G_DIAGNOSTIC_FIELDS) {
@@ -283,7 +273,7 @@ extern "C" {
 int dycore_init(
     /* Mesh dimensions */
     int nCells, int nEdges, int nVertices, int nVertLevels, int maxEdges,
-    int num_scalars,
+    int num_scalars, int nCellsSolve, int nEdgesSolve,
     /* Mesh geometry / connectivity pointers */
     int* cellsOnEdge, int* edgesOnCell, int* verticesOnEdge,
     int* nEdgesOnCell_ptr,
@@ -304,7 +294,56 @@ int dycore_init(
     double config_smdiv, double config_len_disp,
     double config_apvm_upwinding, int config_hollingsworth,
     /* MPI */
-    int mpi_comm_fortran) {
+    int mpi_comm_fortran,
+    /* Marshalled halo topology: cell send */
+    int cell_send_n_neighbors, int cell_send_n_layers,
+    int* cell_send_neighbor_ranks, int* cell_send_layer_counts,
+    int* cell_send_indices,
+    /* Marshalled halo topology: cell recv */
+    int cell_recv_n_neighbors, int cell_recv_n_layers,
+    int* cell_recv_neighbor_ranks, int* cell_recv_layer_counts,
+    int* cell_recv_indices,
+    /* Marshalled halo topology: edge send */
+    int edge_send_n_neighbors, int edge_send_n_layers,
+    int* edge_send_neighbor_ranks, int* edge_send_layer_counts,
+    int* edge_send_indices,
+    /* Marshalled halo topology: edge recv */
+    int edge_recv_n_neighbors, int edge_recv_n_layers,
+    int* edge_recv_neighbor_ranks, int* edge_recv_layer_counts,
+    int* edge_recv_indices,
+    /* Marshalled halo topology: vertex send */
+    int vertex_send_n_neighbors, int vertex_send_n_layers,
+    int* vertex_send_neighbor_ranks, int* vertex_send_layer_counts,
+    int* vertex_send_indices,
+    /* Marshalled halo topology: vertex recv */
+    int vertex_recv_n_neighbors, int vertex_recv_n_layers,
+    int* vertex_recv_neighbor_ranks, int* vertex_recv_layer_counts,
+    int* vertex_recv_indices) {
+
+  // ── Marshalled halo topology (Req 7.5) ────────────────────────────────────
+  // This entry point accepts the flattened per-element-kind, per-direction CSR
+  // arrays describing the MPAS halo exchange lists.  Reconstruction of the
+  // HaloTopology from these arrays and construction of the Halo_Manager happen
+  // in a later step (task 8.1 / 8.2); for now the parameters are accepted so the
+  // C API surface and the Fortran marshalling shim can be developed in parallel.
+  (void)cell_send_n_neighbors;   (void)cell_send_n_layers;
+  (void)cell_send_neighbor_ranks; (void)cell_send_layer_counts;
+  (void)cell_send_indices;
+  (void)cell_recv_n_neighbors;   (void)cell_recv_n_layers;
+  (void)cell_recv_neighbor_ranks; (void)cell_recv_layer_counts;
+  (void)cell_recv_indices;
+  (void)edge_send_n_neighbors;   (void)edge_send_n_layers;
+  (void)edge_send_neighbor_ranks; (void)edge_send_layer_counts;
+  (void)edge_send_indices;
+  (void)edge_recv_n_neighbors;   (void)edge_recv_n_layers;
+  (void)edge_recv_neighbor_ranks; (void)edge_recv_layer_counts;
+  (void)edge_recv_indices;
+  (void)vertex_send_n_neighbors;   (void)vertex_send_n_layers;
+  (void)vertex_send_neighbor_ranks; (void)vertex_send_layer_counts;
+  (void)vertex_send_indices;
+  (void)vertex_recv_n_neighbors;   (void)vertex_recv_n_layers;
+  (void)vertex_recv_neighbor_ranks; (void)vertex_recv_layer_counts;
+  (void)vertex_recv_indices;
 
   // ── 0a. Dimension validation (Req 8.3) ───────────────────────────────────
   if (nCells <= 0 || nEdges <= 0 || nVertLevels <= 0 || maxEdges <= 0) {
@@ -359,6 +398,9 @@ int dycore_init(
   // ── 3. Allocate the context ───────────────────────────────────────────────
   g_context = std::make_unique<DycoreContext>(std::move(cfg));
   g_context->num_scalars = num_scalars;
+  // Fall back to total counts if the caller passes 0 (keeps older callers working).
+  g_context->nCellsSolve = (nCellsSolve > 0) ? nCellsSolve : nCells;
+  g_context->nEdgesSolve = (nEdgesSolve > 0) ? nEdgesSolve : nEdges;
   g_context->mpi_comm = mpi_comm;
 
   MeshDims& dims = g_context->dims;
@@ -520,6 +562,14 @@ int dycore_init(
   // Wrap all dynamic diagnostics and tendency fields from MPAS pools
   wrap_all_diagnostic_fields(store, names, nCells, nEdges, nVertices, nVertLevels, maxEdges, num_scalars);
 
+  // Total water mixing ratio (qtot): a dycore-internal field, computed once per
+  // timestep in compute_moist_coefficients and shared by cqw, the vertical
+  // implicit coefficients, and the w-equation buoyancy (matches the Fortran
+  // module-level qtot array). It is not an MPAS pool field, so allocate it here.
+  if (!store.has_field("qtot")) {
+    store.allocate("qtot", nVertLevels, nCells);
+  }
+
   return 0;  // Success
 }
 
@@ -547,8 +597,8 @@ void dycore_timestep(double dt, int itimestep) {
       .nEdges = g_context->dims.nEdges,
       .nVertices = g_context->dims.nVertices,
       .nVertLevels = g_context->dims.nVertLevels,
-      .nCellsSolve = g_context->dims.nCells,
-      .nEdgesSolve = g_context->dims.nEdges,
+      .nCellsSolve = g_context->nCellsSolve,
+      .nEdgesSolve = g_context->nEdgesSolve,
       .num_scalars = g_context->num_scalars,
       .maxEdges = g_context->dims.maxEdges,
       .itimestep = itimestep,

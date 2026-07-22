@@ -74,7 +74,9 @@ module mpas_dycore_marshalling
       ! Dimension scalars
       integer, pointer :: nCells_ptr, nEdges_ptr, nVertices_ptr
       integer, pointer :: nVertLevels_ptr, maxEdges_ptr, num_scalars_ptr
+      integer, pointer :: nCellsSolve_ptr, nEdgesSolve_ptr
       integer :: nCells, nEdges, nVertices, nVertLevels, maxEdges_val, num_scalars
+      integer :: nCellsSolve, nEdgesSolve
 
       ! Connectivity arrays (1-based from MPAS)
       integer, dimension(:,:), pointer :: cellsOnEdge_mpas
@@ -157,6 +159,8 @@ module mpas_dycore_marshalling
       call mpas_pool_get_dimension(mesh, 'nVertLevels', nVertLevels_ptr)
       call mpas_pool_get_dimension(mesh, 'maxEdges', maxEdges_ptr)
       call mpas_pool_get_dimension(state, 'num_scalars', num_scalars_ptr)
+      call mpas_pool_get_dimension(mesh, 'nCellsSolve', nCellsSolve_ptr)
+      call mpas_pool_get_dimension(mesh, 'nEdgesSolve', nEdgesSolve_ptr)
 
       nCells = nCells_ptr
       nEdges = nEdges_ptr
@@ -164,6 +168,8 @@ module mpas_dycore_marshalling
       nVertLevels = nVertLevels_ptr
       maxEdges_val = maxEdges_ptr
       num_scalars = num_scalars_ptr
+      nCellsSolve = nCellsSolve_ptr
+      nEdgesSolve = nEdgesSolve_ptr
 
       !--------------------------------------------------------------------
       ! Extract connectivity arrays (1-based) from mesh pool
@@ -180,22 +186,30 @@ module mpas_dycore_marshalling
       ! nEdgesOnCell stores counts (not indices) and is copied as-is.
       !--------------------------------------------------------------------
 
+      ! IMPORTANT: connectivity indices are passed to the C++ dycore as the
+      ! Fortran 1-based values VERBATIM. The C++ MeshData contract states the
+      ! raw pointers are not renumbered here; every C++ kernel performs the
+      ! 1-based -> 0-based conversion at the point of use (idx - 1). Subtracting
+      ! 1 here as well would double-decrement and read the wrong cells/edges.
+      ! The buffers are copied (not aliased) only to guarantee contiguous,
+      ! persistent storage for the lifetime of the C++ context.
+
       ! cellsOnEdge: shape (2, nEdges) — contiguous column-major in memory
       allocate(cellsOnEdge_0based(2 * nEdges))
       do i = 1, 2 * nEdges
-         cellsOnEdge_0based(i) = cellsOnEdge_mpas(1 + mod(i-1, 2), 1 + (i-1)/2) - 1
+         cellsOnEdge_0based(i) = cellsOnEdge_mpas(1 + mod(i-1, 2), 1 + (i-1)/2)
       end do
 
       ! edgesOnCell: shape (maxEdges, nCells) — contiguous column-major
       allocate(edgesOnCell_0based(maxEdges_val * nCells))
       do i = 1, maxEdges_val * nCells
-         edgesOnCell_0based(i) = edgesOnCell_mpas(1 + mod(i-1, maxEdges_val), 1 + (i-1)/maxEdges_val) - 1
+         edgesOnCell_0based(i) = edgesOnCell_mpas(1 + mod(i-1, maxEdges_val), 1 + (i-1)/maxEdges_val)
       end do
 
       ! verticesOnEdge: shape (2, nEdges) — contiguous column-major
       allocate(verticesOnEdge_0based(2 * nEdges))
       do i = 1, 2 * nEdges
-         verticesOnEdge_0based(i) = verticesOnEdge_mpas(1 + mod(i-1, 2), 1 + (i-1)/2) - 1
+         verticesOnEdge_0based(i) = verticesOnEdge_mpas(1 + mod(i-1, 2), 1 + (i-1)/2)
       end do
 
       ! nEdgesOnCell: shape (nCells) — per-cell edge count (not an index),
@@ -280,6 +294,7 @@ module mpas_dycore_marshalling
       !--------------------------------------------------------------------
       ierr = dycore_init( &
          nCells, nEdges, nVertices, nVertLevels, maxEdges_val, num_scalars, &
+         nCellsSolve, nEdgesSolve, &
          cellsOnEdge_0based, edgesOnCell_0based, verticesOnEdge_0based, nEdgesOnCell_0based, &
          dvEdge, dcEdge, areaCell, zgrid, zz, fzm, fzp, &
          u_tl1, u_tl2, w_tl1, w_tl2, &

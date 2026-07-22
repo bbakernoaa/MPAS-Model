@@ -126,7 +126,13 @@ struct TestBuffers {
         /* config_len_disp */ 120000.0,
         /* config_apvm_upwinding */ 0.0,
         /* config_hollingsworth */ 1,
-        /* mpi_comm_fortran */ 0);
+        /* mpi_comm_fortran */ 0,
+        /* cell send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* cell recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge send   */ 0, 0, nullptr, nullptr, nullptr,
+        /* edge recv   */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex send */ 0, 0, nullptr, nullptr, nullptr,
+        /* vertex recv */ 0, 0, nullptr, nullptr, nullptr);
   }
 };
 
