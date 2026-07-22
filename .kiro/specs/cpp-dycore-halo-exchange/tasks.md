@@ -18,6 +18,8 @@ Each task builds on the previous ones and ends with integration into a working
 whole. Implementation language is C++ (with a Fortran shim for marshalling), per
 the design.
 
+**Build note:** Use `--cpus=4` when running Docker builds. The C++ dycore library and its tests are already built in the `mpas-dycore-build` Docker image.
+
 ## Tasks
 
 - [ ] 1. HALO indexed plan type (domain-agnostic)

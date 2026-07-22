@@ -104,7 +104,7 @@ src/core_*/inc
 #       this repo tracks hand-written .cmake modules and Makefiles.
 # ------------------------------------------------------------------
 build/
-Testing/
+#Testing/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake

@@ -14,6 +14,7 @@
 
 #include "mpas_dycore/config.hpp"
 #include "mpas_dycore/field_store.hpp"
+#include "mpas_dycore/halo_manager.hpp"
 #include "mpas_dycore/mesh_data.hpp"
 #include "mpas_dycore/scalar.hpp"
 #include "mpas_dycore/time_integrator_advance.hpp"
@@ -44,6 +45,58 @@ using Config = mpas::dycore::Config;
 using ConfigBuilder = mpas::dycore::ConfigBuilder;
 using MeshDims = mpas::dycore::MeshDims;
 using MeshRawPointers = mpas::dycore::MeshRawPointers;
+using HaloTopology = mpas::dycore::HaloTopology;
+using HaloNeighborInfo = mpas::dycore::HaloNeighborInfo;
+using Domain = mpas::dycore::Domain;
+using HaloManager = mpas::dycore::Halo_Manager;
+
+/// @brief Decode one CSR-marshalled (element-kind, direction) halo group into a
+/// list of HaloNeighborInfo.
+///
+/// The C API delivers each (kind, direction) group as the flattened arrays
+/// documented in dycore_c_api.h:
+///   - neighbor_ranks[n_neighbors]              : neighbor MPI ranks.
+///   - layer_counts[n_neighbors * n_layers]     : index count per (neighbor,
+///                                                layer), row-major by neighbor
+///                                                then layer.
+///   - indices[sum(layer_counts)]               : concatenated 0-based local
+///                                                indices; slices delimited by
+///                                                the prefix sum of layer_counts.
+///
+/// The indices are already 0-based (converted by the Fortran marshaller) and are
+/// copied verbatim. An empty direction is signalled by n_neighbors == 0 (the
+/// pointer arguments may then be null) and produces an empty neighbor list.
+std::vector<HaloNeighborInfo> decode_halo_direction(
+    int n_neighbors, int n_layers,
+    const int* neighbor_ranks, const int* layer_counts,
+    const int* indices) {
+  std::vector<HaloNeighborInfo> neighbors;
+  if (n_neighbors <= 0 || n_layers <= 0 ||
+      neighbor_ranks == nullptr || layer_counts == nullptr) {
+    return neighbors;  // empty / sentinel direction
+  }
+
+  neighbors.reserve(static_cast<std::size_t>(n_neighbors));
+  std::size_t offset = 0;  // running position into the concatenated indices[]
+  for (int i = 0; i < n_neighbors; ++i) {
+    HaloNeighborInfo info;
+    info.rank = neighbor_ranks[i];
+    info.layers.resize(static_cast<std::size_t>(n_layers));
+    for (int l = 0; l < n_layers; ++l) {
+      const int count = layer_counts[i * n_layers + l];
+      if (count <= 0) {
+        continue;  // no indices for this (neighbor, layer)
+      }
+      auto& layer = info.layers[static_cast<std::size_t>(l)];
+      layer.reserve(static_cast<std::size_t>(count));
+      for (int k = 0; k < count; ++k) {
+        layer.push_back(static_cast<std::size_t>(indices[offset++]));
+      }
+    }
+    neighbors.push_back(std::move(info));
+  }
+  return neighbors;
+}
 
 /// Internal context holding all persistent dycore state between init and finalize.
 /// Heap-allocated via unique_ptr so that destruction order is explicit and we can
@@ -61,6 +114,11 @@ struct DycoreContext {
   /// Names of prognostic state fields registered in state_store (for batch sync).
   std::vector<std::string> prognostic_field_names;
 
+  /// Halo exchange topology reconstructed from the marshalled CSR arrays passed
+  /// to dycore_init (task 8.1). Persists for the life of the context so task 8.2
+  /// can build the Halo_Manager from it and attach it to AdvanceDomain.
+  HaloTopology topology{};
+
   // -- Boundary specified zone masks --
   Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> bdyMaskCell;
   Kokkos::View<int*, Kokkos::LayoutLeft, ExecSpace> bdyMaskEdge;
@@ -74,6 +132,21 @@ struct DycoreContext {
   Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> verticesOnCell;
   Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> kiteForCell;
   Kokkos::View<int**, Kokkos::LayoutLeft, ExecSpace> cellsOnCell;
+
+  /// Persistent halo-exchange state (task 8.2, Req 10.1/10.2).
+  ///
+  /// `halo_domain` bundles the persistent Field_Store (state_store), the MPI
+  /// communicator, and the reconstructed HaloTopology; the Halo_Manager holds a
+  /// non-owning pointer to it and references state_store for every exchange, so
+  /// both must live for the whole simulation and be torn down before the
+  /// Field_Store they reference (and before Kokkos::finalize).
+  ///
+  /// These are declared LAST so that, on context destruction, they are the
+  /// first members destroyed (reverse declaration order): the Halo_Manager is
+  /// released before its Domain, and both are released before state_store, the
+  /// mesh Views, and (in dycore_finalize) before Kokkos::finalize.
+  std::unique_ptr<Domain> halo_domain;
+  std::unique_ptr<HaloManager> halo_manager;
 
   DycoreContext(Config cfg) : config(std::move(cfg)) {}
 };
@@ -320,30 +393,11 @@ int dycore_init(
     int* vertex_recv_neighbor_ranks, int* vertex_recv_layer_counts,
     int* vertex_recv_indices) {
 
-  // ── Marshalled halo topology (Req 7.5) ────────────────────────────────────
+  // ── Marshalled halo topology (Req 7.5, 10.1) ─────────────────────────────
   // This entry point accepts the flattened per-element-kind, per-direction CSR
-  // arrays describing the MPAS halo exchange lists.  Reconstruction of the
-  // HaloTopology from these arrays and construction of the Halo_Manager happen
-  // in a later step (task 8.1 / 8.2); for now the parameters are accepted so the
-  // C API surface and the Fortran marshalling shim can be developed in parallel.
-  (void)cell_send_n_neighbors;   (void)cell_send_n_layers;
-  (void)cell_send_neighbor_ranks; (void)cell_send_layer_counts;
-  (void)cell_send_indices;
-  (void)cell_recv_n_neighbors;   (void)cell_recv_n_layers;
-  (void)cell_recv_neighbor_ranks; (void)cell_recv_layer_counts;
-  (void)cell_recv_indices;
-  (void)edge_send_n_neighbors;   (void)edge_send_n_layers;
-  (void)edge_send_neighbor_ranks; (void)edge_send_layer_counts;
-  (void)edge_send_indices;
-  (void)edge_recv_n_neighbors;   (void)edge_recv_n_layers;
-  (void)edge_recv_neighbor_ranks; (void)edge_recv_layer_counts;
-  (void)edge_recv_indices;
-  (void)vertex_send_n_neighbors;   (void)vertex_send_n_layers;
-  (void)vertex_send_neighbor_ranks; (void)vertex_send_layer_counts;
-  (void)vertex_send_indices;
-  (void)vertex_recv_n_neighbors;   (void)vertex_recv_n_layers;
-  (void)vertex_recv_neighbor_ranks; (void)vertex_recv_layer_counts;
-  (void)vertex_recv_indices;
+  // arrays describing the MPAS halo exchange lists.  They are decoded into the
+  // persistent context's HaloTopology below (after the context is allocated);
+  // construction of the Halo_Manager from that topology happens in task 8.2.
 
   // ── 0a. Dimension validation (Req 8.3) ───────────────────────────────────
   if (nCells <= 0 || nEdges <= 0 || nVertLevels <= 0 || maxEdges <= 0) {
@@ -402,6 +456,34 @@ int dycore_init(
   g_context->nCellsSolve = (nCellsSolve > 0) ? nCellsSolve : nCells;
   g_context->nEdgesSolve = (nEdgesSolve > 0) ? nEdgesSolve : nEdges;
   g_context->mpi_comm = mpi_comm;
+
+  // ── 3b. Reconstruct HaloTopology from marshalled CSR arrays (Req 10.1) ────
+  // Decode each element kind (cell, edge, vertex) and direction (send, recv)
+  // from its flattened CSR description into per-neighbor, per-layer 0-based
+  // index lists. Empty directions (n_neighbors == 0) yield empty neighbor
+  // lists. The reconstructed topology persists in the context for task 8.2,
+  // which builds the Halo_Manager and attaches it to AdvanceDomain.
+  HaloTopology& topology = g_context->topology;
+  topology.cell_send_neighbors = decode_halo_direction(
+      cell_send_n_neighbors, cell_send_n_layers,
+      cell_send_neighbor_ranks, cell_send_layer_counts, cell_send_indices);
+  topology.cell_recv_neighbors = decode_halo_direction(
+      cell_recv_n_neighbors, cell_recv_n_layers,
+      cell_recv_neighbor_ranks, cell_recv_layer_counts, cell_recv_indices);
+  topology.edge_send_neighbors = decode_halo_direction(
+      edge_send_n_neighbors, edge_send_n_layers,
+      edge_send_neighbor_ranks, edge_send_layer_counts, edge_send_indices);
+  topology.edge_recv_neighbors = decode_halo_direction(
+      edge_recv_n_neighbors, edge_recv_n_layers,
+      edge_recv_neighbor_ranks, edge_recv_layer_counts, edge_recv_indices);
+  topology.vertex_send_neighbors = decode_halo_direction(
+      vertex_send_n_neighbors, vertex_send_n_layers,
+      vertex_send_neighbor_ranks, vertex_send_layer_counts,
+      vertex_send_indices);
+  topology.vertex_recv_neighbors = decode_halo_direction(
+      vertex_recv_n_neighbors, vertex_recv_n_layers,
+      vertex_recv_neighbor_ranks, vertex_recv_layer_counts,
+      vertex_recv_indices);
 
   MeshDims& dims = g_context->dims;
   dims.nCells = nCells;
@@ -570,6 +652,25 @@ int dycore_init(
     store.allocate("qtot", nVertLevels, nCells);
   }
 
+  // ── 6. Construct the Halo_Manager and hold it in the context (Req 10.1) ──
+  // Now that the field store is populated and the HaloTopology has been decoded
+  // from the marshalled CSR arrays, build the persistent Domain (bundling the
+  // field store, communicator, and topology) and the Halo_Manager that
+  // references it. Both live in the context so they persist across every
+  // timestep; dycore_timestep attaches this manager to the AdvanceDomain
+  // (Req 10.2). Destruction order is guaranteed by member declaration order:
+  // the manager and its Domain are torn down before state_store and before
+  // Kokkos::finalize (see DycoreContext member ordering / dycore_finalize).
+  //
+  // The Domain takes a copy of the reconstructed topology, leaving
+  // g_context->topology intact. The Halo_Manager leaves each element kind's
+  // indexed plan nullptr when that kind has no neighbors (single-rank run), so
+  // this is safe on one rank as well as on the 48-rank decomposition.
+  g_context->halo_domain = std::make_unique<Domain>(
+      g_context->state_store, g_context->mpi_comm, g_context->topology);
+  g_context->halo_manager = std::make_unique<HaloManager>(
+      *g_context->halo_domain, g_context->config);
+
   return 0;  // Success
 }
 
@@ -603,7 +704,7 @@ void dycore_timestep(double dt, int itimestep) {
       .maxEdges = g_context->dims.maxEdges,
       .itimestep = itimestep,
       .dt = dt,
-      .halo_manager = nullptr,
+      .halo_manager = g_context->halo_manager.get(),
       .scalar_advection_enabled = g_context->config.config_scalar_advection,
       .split_dynamics_transport = false,
       .field_store = &store,
@@ -656,6 +757,21 @@ void dycore_finalize(void) {
   if (Kokkos::is_initialized()) {
     Kokkos::finalize();
   }
+}
+
+// ── Test-only introspection hook (wiring smoke test, Req 10.1 / 10.2) ────────
+// Reports whether the persistent DycoreContext currently holds a non-null
+// Halo_Manager. dycore_timestep sets
+// `AdvanceDomain.halo_manager = g_context->halo_manager.get()`, so a non-zero
+// return here is exactly the condition under which the AdvanceDomain built for
+// a timestep carries a non-null halo_manager. This is a read-only query over
+// already-constructed state: it does not allocate, mutate, or otherwise change
+// any production behavior. It is intentionally NOT declared in the public C
+// header (dycore_c_api.h); the wiring smoke test forward-declares it so it can
+// observe the file-static context through the C ABI without exposing a
+// production accessor to the Fortran driver.
+int dycore_test_halo_manager_is_set(void) {
+  return (g_context && g_context->halo_manager) ? 1 : 0;
 }
 
 }  // extern "C"

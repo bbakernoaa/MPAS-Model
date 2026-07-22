@@ -208,3 +208,89 @@ add_test(NAME test_dynamic_bindings COMMAND $<TARGET_FILE:test_dynamic_bindings>
 set_tests_properties(test_dynamic_bindings PROPERTIES
     TIMEOUT 60
 )
+
+# ─── Halo_Manager Plan Construction Property Test Suite ──────────────────────
+# Separate executable (Task 6.4, Property 7): verifies Halo_Manager builds one
+# Indexed_Halo_Plan per element kind faithfully from a randomly generated
+# HaloTopology. Uses shared main.cpp for MPI + Kokkos + GTest lifecycle.
+add_executable(halo_manager_plan_property_test_suite
+    main.cpp
+    test_halo_manager_plan_property.cpp
+)
+
+target_link_libraries(halo_manager_plan_property_test_suite
+    PRIVATE
+        dycore_cpp
+        GTest::gtest
+        rapidcheck
+)
+
+# Kokkos requires OpenMP link flags
+target_link_options(halo_manager_plan_property_test_suite PRIVATE -fopenmp)
+
+# Add rapidcheck_gtest link dependency
+if(TARGET rapidcheck_gtest)
+    target_link_libraries(halo_manager_plan_property_test_suite PRIVATE rapidcheck_gtest)
+elseif(TARGET rapidcheck-gtest)
+    target_link_libraries(halo_manager_plan_property_test_suite PRIVATE rapidcheck-gtest)
+endif()
+
+add_test(NAME halo_manager_plan_property_test_suite
+         COMMAND $<TARGET_FILE:halo_manager_plan_property_test_suite>)
+set_tests_properties(halo_manager_plan_property_test_suite PROPERTIES
+    TIMEOUT 120
+    ENVIRONMENT "RC_PARAMS=num_tests=100"
+)
+
+# ─── Halo_Manager Group Exchange Unit Test Suite ─────────────────────────────
+# Separate executable (Task 6.5): example-based unit tests for named-group
+# exchange — element-kind routing, time-level forwarding, 0-based layer-subset
+# conversion, unknown-group throw, and missing-field skip. Uses shared main.cpp
+# for the MPI + Kokkos + GTest lifecycle.
+add_executable(halo_manager_group_exchange_test_suite
+    main.cpp
+    test_halo_manager_group_exchange.cpp
+)
+
+target_link_libraries(halo_manager_group_exchange_test_suite
+    PRIVATE
+        dycore_cpp
+        GTest::gtest
+)
+
+# Kokkos requires OpenMP link flags
+target_link_options(halo_manager_group_exchange_test_suite PRIVATE -fopenmp)
+
+add_test(NAME halo_manager_group_exchange_test_suite
+         COMMAND $<TARGET_FILE:halo_manager_group_exchange_test_suite>)
+set_tests_properties(halo_manager_group_exchange_test_suite PROPERTIES
+    TIMEOUT 120
+)
+
+# ─── Dycore Init Wiring Smoke Test Suite ─────────────────────────────────────
+# Separate executable (Task 8.3): smoke test that the production halo-exchange
+# wiring is in place — dycore_init decodes the marshalled CSR halo arrays and
+# constructs a non-null Halo_Manager (Req 7.5, 10.1), and dycore_timestep runs
+# the wired path with that manager attached to the AdvanceDomain (Req 10.2).
+#
+# Provides its own main() so it can initialize MPI (required by the manager's
+# MPI_Comm_dup) while letting dycore_init / dycore_finalize own the Kokkos
+# lifecycle; hence it links GTest::gtest only (no gtest_main).
+add_executable(dycore_init_wiring_smoke_test_suite
+    test_dycore_init_wiring_smoke.cpp
+)
+
+target_link_libraries(dycore_init_wiring_smoke_test_suite
+    PRIVATE
+        dycore_cpp
+        GTest::gtest
+)
+
+# Kokkos requires OpenMP link flags
+target_link_options(dycore_init_wiring_smoke_test_suite PRIVATE -fopenmp)
+
+add_test(NAME dycore_init_wiring_smoke_test_suite
+         COMMAND $<TARGET_FILE:dycore_init_wiring_smoke_test_suite>)
+set_tests_properties(dycore_init_wiring_smoke_test_suite PROPERTIES
+    TIMEOUT 60
+)

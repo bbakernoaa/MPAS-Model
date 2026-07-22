@@ -70,38 +70,47 @@ Config make_gpu_aware_config() {
       .build();
 }
 
-/// Build a self-communicating topology for single-process testing.
+/// Build a HaloNeighborInfo for `rank` whose single halo layer holds the given
+/// 0-based local element (cell/edge/vertex) indices.
 ///
-/// In MPI self-communication, the send count must equal the receive count.
-/// The Halo_Library's exchange_blocking lays out the view as:
-///   [send_region: 0..n_exchange) [recv_region: n_exchange..2*n_exchange)
-///
-/// After exchange, the recv region contains a copy of the send region.
-///
-/// Build a HaloNeighborInfo for a neighbor exchanging `count` elements.
-///
-/// The elements are placed in a single halo layer as indices [0, count).
-/// The contiguous Halo_Plan path only consumes the total index count, so the
-/// specific index values are immaterial for this self-communication test.
-HaloNeighborInfo make_neighbor(int rank, std::size_t count) {
+/// For a send neighbor these are the owned element indices to gather; for a
+/// recv neighbor they are the halo element indices to scatter into. The indexed
+/// exchange (`exchange_indexed`) interprets each index as an element (column)
+/// index for rank-2 fields and transfers the full vertical column per index.
+HaloNeighborInfo make_neighbor(int rank, std::vector<std::size_t> indices) {
   HaloNeighborInfo info;
   info.rank = rank;
-  std::vector<std::size_t> layer;
-  layer.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    layer.push_back(i);
-  }
-  info.layers.push_back(std::move(layer));
+  info.layers.push_back(std::move(indices));
   return info;
 }
 
-/// @param n_exchange Number of elements to send/receive (must match).
-HaloTopology make_self_topology(std::size_t n_exchange) {
+/// Contiguous 0-based index range [begin, begin + count).
+std::vector<std::size_t> index_range(std::size_t begin, std::size_t count) {
+  std::vector<std::size_t> v;
+  v.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    v.push_back(begin + i);
+  }
+  return v;
+}
+
+/// Build a self-communicating topology for single-process testing.
+///
+/// The indexed exchange gathers the owned send-cell columns and scatters them
+/// into the halo recv-cell columns. To demonstrate a transfer on a single rank,
+/// the send indices are the first `n_cells` cells `[0, n_cells)` and the recv
+/// indices are the next `n_cells` cells `[n_cells, 2*n_cells)`. After the
+/// self-exchange, recv cell `n_cells + j` holds a copy of send cell `j`.
+///
+/// @param n_cells Number of cells (elements) to send/receive.
+HaloTopology make_self_topology(std::size_t n_cells) {
+  const auto send_idx = index_range(0, n_cells);
+  const auto recv_idx = index_range(n_cells, n_cells);
   HaloTopology topo;
-  topo.cell_send_neighbors = {make_neighbor(0, n_exchange)};
-  topo.cell_recv_neighbors = {make_neighbor(0, n_exchange)};
-  topo.edge_send_neighbors = {make_neighbor(0, n_exchange)};
-  topo.edge_recv_neighbors = {make_neighbor(0, n_exchange)};
+  topo.cell_send_neighbors = {make_neighbor(0, send_idx)};
+  topo.cell_recv_neighbors = {make_neighbor(0, recv_idx)};
+  topo.edge_send_neighbors = {make_neighbor(0, send_idx)};
+  topo.edge_recv_neighbors = {make_neighbor(0, recv_idx)};
   return topo;
 }
 
@@ -161,7 +170,7 @@ TEST_F(HaloExchangeIntegrationTest, ExchangeExecutesWithoutErrorSingleRank) {
   /// On a single rank with self-communicating topology, exchange should
   /// complete without error. Validates the Halo_Library path is correctly
   /// wired (Req 11.3, 11.4).
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
   Domain domain(store_, MPI_COMM_SELF, topo);
   auto config = make_host_staged_config();
 
@@ -175,7 +184,7 @@ TEST_F(HaloExchangeIntegrationTest, HostStagedExchangeTransfersData) {
   /// With GPU-aware comm disabled, the host-staged path copies device data to
   /// host, performs MPI exchange, and copies results back to device (Req 11.6).
   /// After self-exchange, the recv region should be updated from the sentinel.
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
   Domain domain(store_, MPI_COMM_SELF, topo);
   auto config = make_host_staged_config();
 
@@ -207,7 +216,7 @@ TEST_F(HaloExchangeIntegrationTest, GpuAwareExchangeTransfersData) {
   /// With GPU-aware comm enabled, exchange should transfer device-resident
   /// data without host staging (Req 11.5). On host-only builds, this still
   /// exercises the gpu_aware code path in the Halo_Manager.
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
   Domain domain(store_, MPI_COMM_SELF, topo);
   auto config = make_gpu_aware_config();
 
@@ -245,7 +254,7 @@ TEST_F(HaloExchangeIntegrationTest, HaloCellsReceiveOwnerValues) {
   ///   recv = cells [kExchangeCells, 2*kExchangeCells), all levels
   ///
   /// After exchange, cell j in recv should equal cell j in send.
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
   Domain domain(store_, MPI_COMM_SELF, topo);
   auto config = make_host_staged_config();
 
@@ -304,7 +313,7 @@ TEST_F(HaloExchangeIntegrationTest, MultiFieldGroupExchangeAllFields) {
   fill_field("pressure_p", 3000.0);
   fill_field("rtheta_p", 4000.0);
 
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
   Domain domain(store_, MPI_COMM_SELF, topo);
   auto config = make_host_staged_config();
 
@@ -380,7 +389,7 @@ TEST_F(HaloExchangeIntegrationTest, HostStagedAndGpuAwarePathsConsistent) {
   auto v2 = store2.level("exner", 1);
   Kokkos::deep_copy(v2, v1);
 
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
 
   // Host-staged exchange on store_.
   {
@@ -417,7 +426,7 @@ TEST_F(HaloExchangeIntegrationTest, HostStagedAndGpuAwarePathsConsistent) {
 TEST_F(HaloExchangeIntegrationTest, ExchangePreservesSendRegion) {
   /// Halo exchange should not modify the send region. Only the recv region
   /// should be updated.
-  auto topo = make_self_topology(kExchangeElements);
+  auto topo = make_self_topology(kExchangeCells);
   Domain domain(store_, MPI_COMM_SELF, topo);
   auto config = make_host_staged_config();
 
@@ -500,10 +509,13 @@ TEST_F(HaloExchangeMultiRankTest, TwoRankExchangeOwnerValues) {
   }
   Kokkos::deep_copy(field_view, host_mirror);
 
-  // Topology: exchange kExchangeElements with the neighbor.
+  // Topology: send owned cells [0, kExchangeCells) to the neighbor and receive
+  // the neighbor's owned cells into halo cells [kExchangeCells, 2*kExchangeCells).
   HaloTopology topo;
-  topo.cell_send_neighbors = {make_neighbor(neighbor, kExchangeElements)};
-  topo.cell_recv_neighbors = {make_neighbor(neighbor, kExchangeElements)};
+  topo.cell_send_neighbors = {
+      make_neighbor(neighbor, index_range(0, kExchangeCells))};
+  topo.cell_recv_neighbors = {
+      make_neighbor(neighbor, index_range(kExchangeCells, kExchangeCells))};
 
   Domain domain(store, MPI_COMM_WORLD, topo);
   auto config = make_host_staged_config();

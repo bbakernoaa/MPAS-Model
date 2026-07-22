@@ -19,7 +19,8 @@
 
 module mpas_dycore_marshalling
 
-   use mpas_derived_types, only : domain_type, mpas_pool_type, MPAS_LOG_CRIT
+   use mpas_derived_types, only : domain_type, mpas_pool_type, MPAS_LOG_CRIT, &
+                                  mpas_multihalo_exchange_list, mpas_exchange_list
    use mpas_pool_routines, only : mpas_pool_get_subpool, mpas_pool_get_array, &
                                   mpas_pool_get_dimension, mpas_pool_get_config
    use mpas_kind_types, only : RKIND, StrKIND
@@ -47,7 +48,233 @@ module mpas_dycore_marshalling
    integer, dimension(:), allocatable :: verticesOnEdge_0based
    integer, dimension(:), allocatable :: nEdgesOnCell_0based
 
+   !-----------------------------------------------------------------------
+   ! CSR-flattened halo topology (Req 7.1, 7.2, 7.3, 7.5).
+   !
+   ! For a single (element kind, direction) pair, the MPAS multihalo exchange
+   ! list is flattened into three arrays plus two scalars:
+   !   n_neighbors : number of distinct neighbor ranks in this direction
+   !   n_layers    : number of halo layers
+   !   ranks(n_neighbors)               : neighbor MPI ranks (endPointID)
+   !   counts(n_neighbors * n_layers)   : index count per (neighbor, layer),
+   !                                      row-major by neighbor then layer
+   !   indices(sum(counts))             : concatenated 0-based local indices,
+   !                                      neighbor-major then layer-minor; slices
+   !                                      are delimited by the prefix sum of counts
+   !
+   ! srcList is used for send directions (owned indices to gather) and destList
+   ! for receive directions (halo indices to fill).  Indices are converted from
+   ! MPAS 1-based to 0-based at extraction time.  These buffers persist from
+   ! dycore_init until dycore_finalize because the C++ side reads them during
+   ! initialization.
+   !-----------------------------------------------------------------------
+   type :: csr_halo_type
+      integer :: n_neighbors = 0
+      integer :: n_layers = 0
+      integer, dimension(:), allocatable :: ranks
+      integer, dimension(:), allocatable :: counts
+      integer, dimension(:), allocatable :: indices
+   end type csr_halo_type
+
+   type (csr_halo_type), save :: cell_send_csr, cell_recv_csr
+   type (csr_halo_type), save :: edge_send_csr, edge_recv_csr
+   type (csr_halo_type), save :: vertex_send_csr, vertex_recv_csr
+
    contains
+
+   !***********************************************************************
+   !> @brief Locate the exchange-list node for a given neighbor rank.
+   !>
+   !> Walks the singly-linked exchange list starting at @p head and returns
+   !> the node whose endPointID matches @p rank, or a null pointer if no such
+   !> node exists (which is valid: a neighbor need not appear in every layer).
+   !***********************************************************************
+   function find_exch_node(head, rank) result(node)
+      implicit none
+      type (mpas_exchange_list), pointer :: head
+      integer, intent(in) :: rank
+      type (mpas_exchange_list), pointer :: node
+
+      node => head
+      do while (associated(node))
+         if (node % endPointID == rank) return
+         node => node % next
+      end do
+      nullify(node)
+
+   end function find_exch_node
+
+
+   !***********************************************************************
+   !> @brief Flatten an MPAS multihalo exchange list into CSR arrays.
+   !>
+   !> Reads the existing MPAS exchange lists (Req 7.4 — no rebuild of the
+   !> decomposition) for one element kind and direction, collecting per-neighbor,
+   !> per-halo-layer index lists (Req 7.1, 7.2) into the CSR layout consumed by
+   !> the dycore C API.  Local indices are converted from MPAS 1-based to 0-based
+   !> (Req 7.3).  For send directions the srcList (owned indices to gather) is
+   !> used; for recv directions the destList (halo indices to fill) is used.
+   !>
+   !> @param[in]    mh       Multihalo exchange list (may be null / unassociated).
+   !> @param[in]    use_src  .true. -> use srcList (send); .false. -> destList (recv).
+   !> @param[inout] csr      Destination CSR buffers (reallocated here).
+   !***********************************************************************
+   subroutine build_halo_csr(mh, use_src, csr)
+
+      implicit none
+
+      type (mpas_multihalo_exchange_list), pointer :: mh
+      logical, intent(in) :: use_src
+      type (csr_halo_type), intent(inout) :: csr
+
+      type (mpas_exchange_list), pointer :: node
+      integer :: n_layers, l, in, nn, max_nodes, total, pos, k
+      integer, dimension(:), allocatable :: rank_list
+      logical :: found
+
+      ! Reset any previous contents.
+      if (allocated(csr % ranks))   deallocate(csr % ranks)
+      if (allocated(csr % counts))  deallocate(csr % counts)
+      if (allocated(csr % indices)) deallocate(csr % indices)
+      csr % n_neighbors = 0
+      csr % n_layers = 0
+
+      ! Empty direction: allocate size-1 dummies so the arrays handed across the
+      ! C API are valid addresses.  The C side ignores them when n_neighbors == 0.
+      if (.not. associated(mh)) then
+         call alloc_empty_csr(csr, 0)
+         return
+      end if
+      if (.not. associated(mh % halos)) then
+         call alloc_empty_csr(csr, 0)
+         return
+      end if
+
+      n_layers = size(mh % halos)
+
+      ! Bound the number of nodes to size the working rank list.
+      max_nodes = 0
+      do l = 1, n_layers
+         node => mh % halos(l) % exchList
+         do while (associated(node))
+            max_nodes = max_nodes + 1
+            node => node % next
+         end do
+      end do
+
+      if (max_nodes == 0) then
+         call alloc_empty_csr(csr, n_layers)
+         return
+      end if
+
+      ! Collect distinct neighbor ranks (endPointID) in first-encountered order.
+      allocate(rank_list(max_nodes))
+      nn = 0
+      do l = 1, n_layers
+         node => mh % halos(l) % exchList
+         do while (associated(node))
+            found = .false.
+            do in = 1, nn
+               if (rank_list(in) == node % endPointID) then
+                  found = .true.
+                  exit
+               end if
+            end do
+            if (.not. found) then
+               nn = nn + 1
+               rank_list(nn) = node % endPointID
+            end if
+            node => node % next
+         end do
+      end do
+
+      csr % n_neighbors = nn
+      csr % n_layers = n_layers
+
+      allocate(csr % ranks(nn))
+      csr % ranks(1:nn) = rank_list(1:nn)
+
+      allocate(csr % counts(nn * n_layers))
+      csr % counts = 0
+
+      ! Fill counts[(neighbor-1)*n_layers + layer] and accumulate the total.
+      total = 0
+      do in = 1, nn
+         do l = 1, n_layers
+            node => find_exch_node(mh % halos(l) % exchList, rank_list(in))
+            if (associated(node)) then
+               csr % counts((in-1)*n_layers + l) = node % nlist
+               total = total + node % nlist
+            end if
+         end do
+      end do
+
+      ! Concatenate indices neighbor-major then layer-minor, converting 1->0 based.
+      allocate(csr % indices(max(total, 1)))
+      csr % indices = 0
+      pos = 0
+      do in = 1, nn
+         do l = 1, n_layers
+            node => find_exch_node(mh % halos(l) % exchList, rank_list(in))
+            if (associated(node)) then
+               if (use_src) then
+                  do k = 1, node % nlist
+                     csr % indices(pos + k) = node % srcList(k) - 1
+                  end do
+               else
+                  do k = 1, node % nlist
+                     csr % indices(pos + k) = node % destList(k) - 1
+                  end do
+               end if
+               pos = pos + node % nlist
+            end if
+         end do
+      end do
+
+      deallocate(rank_list)
+
+   end subroutine build_halo_csr
+
+
+   !***********************************************************************
+   !> @brief Allocate size-1 (or empty-layer) dummy CSR buffers.
+   !>
+   !> Used when a (kind, direction) pair has no neighbors so that the C API
+   !> still receives valid, contiguous array addresses.
+   !***********************************************************************
+   subroutine alloc_empty_csr(csr, n_layers)
+
+      implicit none
+
+      type (csr_halo_type), intent(inout) :: csr
+      integer, intent(in) :: n_layers
+
+      csr % n_neighbors = 0
+      csr % n_layers = n_layers
+      allocate(csr % ranks(1));   csr % ranks(1)   = 0
+      allocate(csr % counts(1));  csr % counts(1)  = 0
+      allocate(csr % indices(1)); csr % indices(1) = 0
+
+   end subroutine alloc_empty_csr
+
+
+   !***********************************************************************
+   !> @brief Release the allocatable buffers held by a CSR halo descriptor.
+   !***********************************************************************
+   subroutine free_csr(csr)
+
+      implicit none
+
+      type (csr_halo_type), intent(inout) :: csr
+
+      if (allocated(csr % ranks))   deallocate(csr % ranks)
+      if (allocated(csr % counts))  deallocate(csr % counts)
+      if (allocated(csr % indices)) deallocate(csr % indices)
+      csr % n_neighbors = 0
+      csr % n_layers = 0
+
+   end subroutine free_csr
+
 
    !***********************************************************************
    !> @brief Extract fields from MPAS pools and initialize the C++ dycore.
@@ -290,6 +517,20 @@ module mpas_dycore_marshalling
       if (trim(config_IAU_option_ptr) /= 'off') cfg_iau = 1
 
       !--------------------------------------------------------------------
+      ! Marshal the existing MPAS halo exchange lists into CSR arrays
+      ! (Req 7.1, 7.2, 7.3, 7.4, 8.1).  The lists are read from the block's
+      ! parallel_info; no decomposition is rebuilt and no pool memory is
+      ! modified.  srcList feeds send directions, destList feeds recv
+      ! directions; indices are converted 1-based -> 0-based inside build_halo_csr.
+      !--------------------------------------------------------------------
+      call build_halo_csr(domain % blocklist % parinfo % cellsToSend,    .true.,  cell_send_csr)
+      call build_halo_csr(domain % blocklist % parinfo % cellsToRecv,    .false., cell_recv_csr)
+      call build_halo_csr(domain % blocklist % parinfo % edgesToSend,    .true.,  edge_send_csr)
+      call build_halo_csr(domain % blocklist % parinfo % edgesToRecv,    .false., edge_recv_csr)
+      call build_halo_csr(domain % blocklist % parinfo % verticesToSend, .true.,  vertex_send_csr)
+      call build_halo_csr(domain % blocklist % parinfo % verticesToRecv, .false., vertex_recv_csr)
+
+      !--------------------------------------------------------------------
       ! Call the C++ dycore initialization and check return code (Req 8.2, 8.3)
       !--------------------------------------------------------------------
       ierr = dycore_init( &
@@ -304,7 +545,19 @@ module mpas_dycore_marshalling
          cfg_monotonic, cfg_scalar_advection, cfg_apply_lbcs, &
          cfg_mix_full, cfg_iau, cfg_gpu_aware_comm, &
          cfg_smdiv, cfg_len_disp, cfg_apvm_upwinding, cfg_hollingsworth, &
-         mpi_comm_handle)
+         mpi_comm_handle, &
+         cell_send_csr % n_neighbors, cell_send_csr % n_layers, &
+         cell_send_csr % ranks, cell_send_csr % counts, cell_send_csr % indices, &
+         cell_recv_csr % n_neighbors, cell_recv_csr % n_layers, &
+         cell_recv_csr % ranks, cell_recv_csr % counts, cell_recv_csr % indices, &
+         edge_send_csr % n_neighbors, edge_send_csr % n_layers, &
+         edge_send_csr % ranks, edge_send_csr % counts, edge_send_csr % indices, &
+         edge_recv_csr % n_neighbors, edge_recv_csr % n_layers, &
+         edge_recv_csr % ranks, edge_recv_csr % counts, edge_recv_csr % indices, &
+         vertex_send_csr % n_neighbors, vertex_send_csr % n_layers, &
+         vertex_send_csr % ranks, vertex_send_csr % counts, vertex_send_csr % indices, &
+         vertex_recv_csr % n_neighbors, vertex_recv_csr % n_layers, &
+         vertex_recv_csr % ranks, vertex_recv_csr % counts, vertex_recv_csr % indices)
 
       if (ierr /= 0) then
          if (ierr == 1) then
@@ -364,6 +617,14 @@ module mpas_dycore_marshalling
       if (allocated(edgesOnCell_0based))     deallocate(edgesOnCell_0based)
       if (allocated(verticesOnEdge_0based))  deallocate(verticesOnEdge_0based)
       if (allocated(nEdgesOnCell_0based))    deallocate(nEdgesOnCell_0based)
+
+      ! Deallocate marshalled halo topology CSR buffers
+      call free_csr(cell_send_csr)
+      call free_csr(cell_recv_csr)
+      call free_csr(edge_send_csr)
+      call free_csr(edge_recv_csr)
+      call free_csr(vertex_send_csr)
+      call free_csr(vertex_recv_csr)
 
       global_domain => null()
 

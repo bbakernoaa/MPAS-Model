@@ -25,11 +25,16 @@
 #include <halo/communicator.hpp>
 #include <halo/environment.hpp>
 #include <halo/exchange.hpp>
+#include <halo/exchange_indexed.hpp>
 #include <halo/halo_plan.hpp>
+#include <halo/indexed_halo_plan.hpp>
 
+#include <cstddef>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -145,18 +150,26 @@ class Halo_Manager {
 
   /// @brief Exchange the halo regions of every field in the named group.
   ///
-  /// Looks up the group by name, iterates its field entries, and calls the
-  /// Halo_Library's `exchange_blocking` for each field's View at the specified
-  /// time level. When `gpu_aware_comm` is true and the runtime supports it,
-  /// device-resident data is exchanged directly with no host copy (Req 11.5).
-  /// Otherwise data is staged through host memory (Req 11.6).
+  /// Looks up the group by name and, for each field entry, resolves the field's
+  /// element kind to the matching indexed plan (Req 9.2), the entry's time
+  /// level to the field View (Req 9.3), and the entry's MPAS 1-based
+  /// `halo_layers` to a 0-based layer subset (Req 9.4), then drives a
+  /// gather/communicate/scatter exchange via `halo::exchange_indexed`. The
+  /// indexed exchange internally selects the GPU-aware direct path or the
+  /// host-staged path based on the view's memory space and the runtime
+  /// GPU-aware MPI probe.
+  ///
+  /// Fields absent from the field store are skipped so the group may be
+  /// exchanged before all fields are populated (Req 9.6). An element kind whose
+  /// plan is `nullptr` (single-rank / no neighbors) is likewise skipped.
   ///
   /// @param group_name  The name of the halo group to exchange (e.g.
   ///                    "dynamics:exner").
   ///
-  /// @throws std::runtime_error if group_name is not found in the registry.
+  /// @throws std::runtime_error if group_name is not found in the registry
+  ///                            (Req 9.5).
   ///
-  /// Requirements: 11.3, 11.4, 11.5, 11.6
+  /// Requirements: 9.2, 9.3, 9.4, 9.5, 9.6
   void exchange(const std::string& group_name);
 
   /// @brief Validate the configured halo exchange method.
@@ -182,6 +195,20 @@ class Halo_Manager {
   [[nodiscard]] const HaloGroupDefinition& group(
       const std::string& group_name) const;
 
+  /// @brief Return the built Indexed_Halo_Plan for an element kind (for
+  /// testing / verification).
+  ///
+  /// Returns the plan constructed from the marshalled topology for the given
+  /// element kind, or `nullptr` when that element kind carried no send/recv
+  /// neighbors at construction (e.g. a single-rank run). Production behavior is
+  /// unaffected: this is a read-only const accessor over already-built state.
+  ///
+  /// Requirement: 9.1
+  [[nodiscard]] const halo::Indexed_Halo_Plan* indexed_plan(
+      halo::Element_Kind kind) const {
+    return indexed_plan_for(kind);
+  }
+
  private:
   /// Reference to the domain (non-owning; domain must outlive Halo_Manager).
   Domain* domain_ = nullptr;
@@ -199,6 +226,17 @@ class Halo_Manager {
   /// Pre-built halo plan for edge-based fields.
   std::unique_ptr<halo::Halo_Plan> edge_plan_;
 
+  /// Pre-built indexed (gather/scatter) halo plan for cell-based fields.
+  /// `nullptr` when the topology carries no cell send/recv neighbors
+  /// (e.g. a single-rank run).
+  std::unique_ptr<halo::Indexed_Halo_Plan> cell_indexed_plan_;
+
+  /// Pre-built indexed halo plan for edge-based fields. `nullptr` when empty.
+  std::unique_ptr<halo::Indexed_Halo_Plan> edge_indexed_plan_;
+
+  /// Pre-built indexed halo plan for vertex-based fields. `nullptr` when empty.
+  std::unique_ptr<halo::Indexed_Halo_Plan> vertex_indexed_plan_;
+
   /// The group registry: maps group name -> group definition for O(1) lookup.
   std::unordered_map<std::string, HaloGroupDefinition> groups_;
 
@@ -210,6 +248,30 @@ class Halo_Manager {
   std::unique_ptr<halo::Halo_Plan> build_plan(
       const std::vector<HaloNeighborInfo>& send,
       const std::vector<HaloNeighborInfo>& recv) const;
+
+  /// @brief Convert HaloNeighborInfo list to halo::Indexed_Neighbor list,
+  /// preserving per-layer index lists.
+  static std::vector<halo::Indexed_Neighbor> to_indexed_neighbors(
+      const std::vector<HaloNeighborInfo>& infos);
+
+  /// @brief Build an Indexed_Halo_Plan for one element kind, returning nullptr
+  /// when both the send and recv neighbor lists are empty (single-rank).
+  std::unique_ptr<halo::Indexed_Halo_Plan> build_indexed_plan(
+      halo::Element_Kind kind,
+      const std::vector<HaloNeighborInfo>& send,
+      const std::vector<HaloNeighborInfo>& recv) const;
+
+  /// @brief Map a field name to the mesh Element_Kind it is defined on.
+  ///
+  /// Replaces the previous hard-coded name-based edge/cell split with an
+  /// explicit table. Edge-based fields (normal velocities and edge-staggered
+  /// quantities) return `edge`; vertex-based fields return `vertex`; all other
+  /// fields default to `cell`.
+  static halo::Element_Kind element_kind_of(std::string_view field_name);
+
+  /// @brief Select the indexed plan matching an element kind (may be nullptr).
+  [[nodiscard]] halo::Indexed_Halo_Plan* indexed_plan_for(
+      halo::Element_Kind kind) const;
 };
 
 // ─── Inline / template implementation ────────────────────────────────────────
@@ -234,6 +296,61 @@ inline std::unique_ptr<halo::Halo_Plan> Halo_Manager::build_plan(
       *communicator_,
       to_halo_neighbors(send),
       to_halo_neighbors(recv));
+}
+
+inline std::vector<halo::Indexed_Neighbor> Halo_Manager::to_indexed_neighbors(
+    const std::vector<HaloNeighborInfo>& infos) {
+  std::vector<halo::Indexed_Neighbor> result;
+  result.reserve(infos.size());
+  for (const auto& info : infos) {
+    result.push_back(halo::Indexed_Neighbor{info.rank, info.layers});
+  }
+  return result;
+}
+
+inline std::unique_ptr<halo::Indexed_Halo_Plan> Halo_Manager::build_indexed_plan(
+    halo::Element_Kind kind,
+    const std::vector<HaloNeighborInfo>& send,
+    const std::vector<HaloNeighborInfo>& recv) const {
+  // Single-rank (or otherwise neighborless) topology: no plan needed.
+  if (send.empty() && recv.empty()) {
+    return nullptr;
+  }
+  return std::make_unique<halo::Indexed_Halo_Plan>(
+      *communicator_,
+      kind,
+      to_indexed_neighbors(send),
+      to_indexed_neighbors(recv));
+}
+
+inline halo::Element_Kind Halo_Manager::element_kind_of(
+    std::string_view field_name) {
+  // Edge-based fields: normal velocities and edge-staggered quantities.
+  if (field_name == "u" || field_name == "ru" || field_name == "ru_p" ||
+      field_name == "pv_edge" || field_name == "rho_edge" ||
+      field_name == "tend_u") {
+    return halo::Element_Kind::edge;
+  }
+  // Vertex-based fields: potential vorticity / circulation on dual cells.
+  if (field_name == "pv_vertex" || field_name == "vorticity") {
+    return halo::Element_Kind::vertex;
+  }
+  // All remaining prognostic/diagnostic fields live on cell centers.
+  return halo::Element_Kind::cell;
+}
+
+inline halo::Indexed_Halo_Plan* Halo_Manager::indexed_plan_for(
+    halo::Element_Kind kind) const {
+  switch (kind) {
+    case halo::Element_Kind::edge:
+      return edge_indexed_plan_.get();
+    case halo::Element_Kind::vertex:
+      return vertex_indexed_plan_.get();
+    case halo::Element_Kind::cell:
+    case halo::Element_Kind::generic:
+    default:
+      return cell_indexed_plan_.get();
+  }
 }
 
 inline Halo_Manager::Halo_Manager(Domain& domain, const Config& config)
@@ -262,6 +379,23 @@ inline Halo_Manager::Halo_Manager(Domain& domain, const Config& config)
   edge_plan_ = build_plan(domain.topology.edge_send_neighbors,
                           domain.topology.edge_recv_neighbors);
 
+  // Build one indexed (gather/scatter) plan per element kind directly from the
+  // per-neighbor, per-layer index lists in the topology (Req 9.1). Each plan is
+  // left nullptr when its element kind has no send/recv neighbors, which is the
+  // single-rank case.
+  cell_indexed_plan_ =
+      build_indexed_plan(halo::Element_Kind::cell,
+                         domain.topology.cell_send_neighbors,
+                         domain.topology.cell_recv_neighbors);
+  edge_indexed_plan_ =
+      build_indexed_plan(halo::Element_Kind::edge,
+                         domain.topology.edge_send_neighbors,
+                         domain.topology.edge_recv_neighbors);
+  vertex_indexed_plan_ =
+      build_indexed_plan(halo::Element_Kind::vertex,
+                         domain.topology.vertex_send_neighbors,
+                         domain.topology.vertex_recv_neighbors);
+
   // Build the full group registry and store each definition in the map.
   // This creates every initialization, dynamics, and (conditional) physics
   // group defined by the Reference_Model (Req 11.1, 11.2, 11.8, 11.9).
@@ -278,6 +412,11 @@ inline Halo_Manager::~Halo_Manager() {
   // non-owning pointer to the Communicator.
   cell_plan_.reset();
   edge_plan_.reset();
+  // Indexed_Halo_Plan also holds a non-owning Communicator pointer; release
+  // the indexed plans before the communicator as well.
+  cell_indexed_plan_.reset();
+  edge_indexed_plan_.reset();
+  vertex_indexed_plan_.reset();
   // halo::Communicator's destructor calls MPI_Comm_free on the duplicated
   // communicator. The groups_ map is destroyed by its own destructor.
   // This satisfies Req 11.7: release communication buffers and group resources.
@@ -296,56 +435,47 @@ inline void Halo_Manager::exchange(const std::string& group_name) {
   const HaloGroupDefinition& group_def = it->second;
   auto& field_store = domain_->field_store;
 
-  // For each field in the group, get the View at the specified time level
-  // and perform a halo exchange via the Halo_Library (Req 11.3, 11.4).
+  // For each field in the group, resolve its element-kind indexed plan, the
+  // View at the requested time level, and the 0-based layer subset, then drive
+  // an indexed gather/communicate/scatter exchange (Req 9.2, 9.3, 9.4).
   for (const auto& field_entry : group_def.fields) {
     if (!field_store.has_field(field_entry.field_name)) {
       // Field not yet registered in the store (may be allocated later or
-      // conditionally). Skip silently — this allows Halo_Manager to be
-      // constructed before all fields are populated.
+      // conditionally). Skip silently so a group may be exchanged before all
+      // fields are populated (Req 9.6).
       continue;
     }
 
-    // Get the device-side View for this field at the specified time level.
+    // Resolve the field's element kind and select the matching indexed plan
+    // (Req 9.2).
+    const halo::Element_Kind kind = element_kind_of(field_entry.field_name);
+    halo::Indexed_Halo_Plan* plan = indexed_plan_for(kind);
+
+    if (plan == nullptr) {
+      // No topology for this element kind — skip (single-rank run or a plan
+      // whose send/recv neighbor lists were empty at construction).
+      continue;
+    }
+
+    // Get the device-side View for this field at the specified time level
+    // (Req 9.3).
     auto field_view = field_store.level(field_entry.field_name,
                                         field_entry.time_level);
 
-    // Select the appropriate halo plan based on field identity.
-    // Edge-based fields (u, ru, pv_edge, tend_u, etc.) use the edge plan;
-    // cell-based fields use the cell plan. This mapping follows the
-    // Reference_Model's element-type assignments.
-    halo::Halo_Plan* plan = nullptr;
-    const auto& name = field_entry.field_name;
-    if (name == "u" || name == "ru" || name == "pv_edge" ||
-        name == "tend_u" || name == "ru_p") {
-      plan = edge_plan_.get();
-    } else {
-      plan = cell_plan_.get();
+    // Convert the entry's MPAS 1-based halo layer numbers to the 0-based layer
+    // indices that exchange_indexed expects (Req 9.4).
+    std::vector<int> layer_subset;
+    layer_subset.reserve(field_entry.halo_layers.size());
+    for (int mpas_layer : field_entry.halo_layers) {
+      layer_subset.push_back(mpas_layer - 1);
     }
 
-    if (plan == nullptr) {
-      // No topology for this element type — skip (single-process run or
-      // topology not yet populated).
-      continue;
-    }
-
-    if (gpu_aware_comm_) {
-      // GPU-aware path (Req 11.5): exchange device-resident data directly.
-      // The Halo_Library's exchange_blocking dispatches between GPU-direct
-      // and host-staged paths based on its compile-time
-      // requires_staging_v<ViewType> trait and its runtime
-      // Environment::is_gpu_aware_mpi() probe. When Config says gpu_aware,
-      // we pass the device View trusting the library to use the direct path.
-      halo::exchange_blocking(*plan, field_view);
-    } else {
-      // Host-staged path (Req 11.6): sync device data to a host mirror,
-      // perform the exchange on host, then copy the result back to device.
-      auto host_mirror = Kokkos::create_mirror_view(
-          Kokkos::HostSpace{}, field_view);
-      Kokkos::deep_copy(host_mirror, field_view);
-      halo::exchange_blocking(*plan, host_mirror);
-      Kokkos::deep_copy(field_view, host_mirror);
-    }
+    // Drive the indexed exchange. exchange_indexed internally selects the
+    // GPU-aware direct path or the host-staged path from the view's memory
+    // space and the runtime GPU-aware MPI probe, so no manual host mirroring
+    // is needed here.
+    halo::exchange_indexed(*plan, field_view,
+                           std::span<const int>(layer_subset));
   }
 }
 

@@ -1,5 +1,38 @@
 {
-  "pbtResults": {},
+  "pbtResults": {
+    "1.3 Write property test for plan totals": {
+      "status": "passed",
+      "lastRunTimestamp": 1784704074865
+    },
+    "1.2 Write property test for plan topology preservation": {
+      "status": "passed",
+      "lastRunTimestamp": 1784699989964
+    },
+    "2.3 Write property test for empty/neighborless no-op": {
+      "status": "passed",
+      "lastRunTimestamp": 1784704907559
+    },
+    "2.4 Write property test for layer-subset exactness": {
+      "status": "passed",
+      "lastRunTimestamp": 1784704924773
+    },
+    "2.2 Write property test for indexed exchange round-trip": {
+      "status": "passed",
+      "lastRunTimestamp": 1784705006787
+    },
+    "5.3 Write property test for 1-based to 0-based conversion": {
+      "status": "passed",
+      "lastRunTimestamp": 1784705419970
+    },
+    "2.6 Write property test for idempotence with fixed owned state": {
+      "status": "passed",
+      "lastRunTimestamp": 1784705677606
+    },
+    "6.4 Write property test for Halo_Manager plan construction": {
+      "status": "passed",
+      "lastRunTimestamp": 1784706815389
+    }
+  },
   "executionHistory": {
     "1.1 Implement `Indexed_Halo_Plan`, `Element_Kind`, and `Indexed_Neighbor`": [
       {

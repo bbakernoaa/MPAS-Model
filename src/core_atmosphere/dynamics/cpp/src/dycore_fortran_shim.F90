@@ -77,7 +77,19 @@ module mpas_dycore_interface
         config_monotonic, config_scalar_advection, config_apply_lbcs, &
         config_mix_full, config_iau, gpu_aware_comm, &
         config_smdiv, config_len_disp, config_apvm_upwinding, config_hollingsworth, &
-        mpi_comm_fortran) &
+        mpi_comm_fortran, &
+        cell_send_n_neighbors, cell_send_n_layers, &
+        cell_send_neighbor_ranks, cell_send_layer_counts, cell_send_indices, &
+        cell_recv_n_neighbors, cell_recv_n_layers, &
+        cell_recv_neighbor_ranks, cell_recv_layer_counts, cell_recv_indices, &
+        edge_send_n_neighbors, edge_send_n_layers, &
+        edge_send_neighbor_ranks, edge_send_layer_counts, edge_send_indices, &
+        edge_recv_n_neighbors, edge_recv_n_layers, &
+        edge_recv_neighbor_ranks, edge_recv_layer_counts, edge_recv_indices, &
+        vertex_send_n_neighbors, vertex_send_n_layers, &
+        vertex_send_neighbor_ranks, vertex_send_layer_counts, vertex_send_indices, &
+        vertex_recv_n_neighbors, vertex_recv_n_layers, &
+        vertex_recv_neighbor_ranks, vertex_recv_layer_counts, vertex_recv_indices) &
         result(ierr) bind(C, name='dycore_init')
       import :: c_int, c_double
       integer(c_int) :: ierr
@@ -124,6 +136,42 @@ module mpas_dycore_interface
       real(c_double), value, intent(in) :: config_apvm_upwinding
       integer(c_int), value, intent(in) :: config_hollingsworth
       integer(c_int), value, intent(in) :: mpi_comm_fortran
+      ! Marshalled halo topology (Req 7.5).  For each element kind (cell, edge,
+      ! vertex) and direction (send, recv) the MPAS exchange lists are flattened
+      ! into a CSR-style description: n_neighbors, n_layers, neighbor_ranks[],
+      ! layer_counts[n_neighbors*n_layers] (row-major by neighbor then layer),
+      ! and a single concatenated indices[] array of 0-based local indices whose
+      ! slices are delimited by the prefix sum of layer_counts.
+      integer(c_int), value, intent(in) :: cell_send_n_neighbors
+      integer(c_int), value, intent(in) :: cell_send_n_layers
+      integer(c_int), intent(in) :: cell_send_neighbor_ranks(*)
+      integer(c_int), intent(in) :: cell_send_layer_counts(*)
+      integer(c_int), intent(in) :: cell_send_indices(*)
+      integer(c_int), value, intent(in) :: cell_recv_n_neighbors
+      integer(c_int), value, intent(in) :: cell_recv_n_layers
+      integer(c_int), intent(in) :: cell_recv_neighbor_ranks(*)
+      integer(c_int), intent(in) :: cell_recv_layer_counts(*)
+      integer(c_int), intent(in) :: cell_recv_indices(*)
+      integer(c_int), value, intent(in) :: edge_send_n_neighbors
+      integer(c_int), value, intent(in) :: edge_send_n_layers
+      integer(c_int), intent(in) :: edge_send_neighbor_ranks(*)
+      integer(c_int), intent(in) :: edge_send_layer_counts(*)
+      integer(c_int), intent(in) :: edge_send_indices(*)
+      integer(c_int), value, intent(in) :: edge_recv_n_neighbors
+      integer(c_int), value, intent(in) :: edge_recv_n_layers
+      integer(c_int), intent(in) :: edge_recv_neighbor_ranks(*)
+      integer(c_int), intent(in) :: edge_recv_layer_counts(*)
+      integer(c_int), intent(in) :: edge_recv_indices(*)
+      integer(c_int), value, intent(in) :: vertex_send_n_neighbors
+      integer(c_int), value, intent(in) :: vertex_send_n_layers
+      integer(c_int), intent(in) :: vertex_send_neighbor_ranks(*)
+      integer(c_int), intent(in) :: vertex_send_layer_counts(*)
+      integer(c_int), intent(in) :: vertex_send_indices(*)
+      integer(c_int), value, intent(in) :: vertex_recv_n_neighbors
+      integer(c_int), value, intent(in) :: vertex_recv_n_layers
+      integer(c_int), intent(in) :: vertex_recv_neighbor_ranks(*)
+      integer(c_int), intent(in) :: vertex_recv_layer_counts(*)
+      integer(c_int), intent(in) :: vertex_recv_indices(*)
     end function dycore_init
 
     !> Advance the dycore by one timestep.
