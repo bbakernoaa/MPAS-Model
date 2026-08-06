@@ -5,6 +5,30 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ============================================================================
+# mdspan availability check
+# ============================================================================
+# GCC < 14 and older compilers don't ship <mdspan>. Use the Kokkos reference
+# implementation (header-only) as a fallback.
+include(CheckIncludeFileCXX)
+check_include_file_cxx("mdspan" HAS_STD_MDSPAN)
+
+if(NOT HAS_STD_MDSPAN)
+    message(STATUS "Compiler does not provide <mdspan>; fetching Kokkos mdspan reference implementation")
+    include(FetchContent)
+    FetchContent_Declare(
+        mdspan_impl
+        GIT_REPOSITORY https://github.com/kokkos/mdspan.git
+        GIT_TAG        stable
+        GIT_SHALLOW    TRUE
+    )
+    set(MDSPAN_CXX_STANDARD 23 CACHE STRING "" FORCE)
+    set(MDSPAN_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(MDSPAN_ENABLE_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(MDSPAN_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(mdspan_impl)
+endif()
+
 # Options propagated from MPAS Makefile
 option(MPAS_USE_OPENMP "Enable OpenMP execution policy" OFF)
 option(MPAS_USE_GPU "Enable GPU execution policy" OFF)
@@ -18,9 +42,12 @@ find_package(MPI REQUIRED COMPONENTS CXX)
 add_library(mpas_dycore_cpp STATIC
     src/placeholder.cpp
     src/mesh.cpp
+    src/geometry.cpp
     src/halo.cpp
     src/state.cpp
+    src/workspace.cpp
     src/api.cpp
+    src/srk3.cpp
     src/kernels/moist_coefficients.cpp
     src/kernels/vert_implicit.cpp
     src/kernels/diagnostics.cpp
@@ -37,9 +64,15 @@ add_library(mpas_dycore_cpp STATIC
     src/kernels/boundaries.cpp
     src/kernels/iau.cpp
     src/kernels/velocity_reconstruct.cpp
+    src/kernels/recover_state.cpp
 )
 
 target_include_directories(mpas_dycore_cpp PUBLIC include)
+
+if(NOT HAS_STD_MDSPAN)
+    target_include_directories(mpas_dycore_cpp PUBLIC ${mdspan_impl_SOURCE_DIR}/include)
+endif()
+
 target_link_libraries(mpas_dycore_cpp PRIVATE MPI::MPI_CXX)
 
 target_compile_definitions(mpas_dycore_cpp PUBLIC

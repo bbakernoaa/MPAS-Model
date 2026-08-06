@@ -5,12 +5,16 @@
 ///
 /// Defines the DycoreState struct that holds all runtime state for the
 /// dynamical core: mesh dimensions, MPI communicator, owned workspace memory,
-/// mesh connectivity, halo exchange state, and configuration parameters.
+/// mesh connectivity, halo exchange state, callback function pointers for
+/// hybrid execution, and configuration parameters.
 /// A single global instance is managed through get_dycore_state().
 
 #include <mpas_dycore/types.hpp>
 #include <mpas_dycore/mesh.hpp>
 #include <mpas_dycore/halo.hpp>
+#include <mpas_dycore/geometry.hpp>
+#include <mpas_dycore/workspace.hpp>
+#include <mpas_dycore/api.h>
 
 #include <mpi.h>
 #include <vector>
@@ -72,6 +76,12 @@ struct DycoreState {
     /// MPI communicator for this dycore instance.
     MPI_Comm comm = MPI_COMM_NULL;
 
+    /// Mesh geometry, metric, and stencil data from Fortran.
+    MeshGeometry geometry;
+
+    /// SRK3 workspace holding all intermediate arrays for time integration.
+    SRK3Workspace srk3_workspace;
+
     // ---- Owned workspace memory ----
 
     /// Scratch arrays for timestep computation (single contiguous allocation).
@@ -112,6 +122,39 @@ struct DycoreState {
 
     /// Number of acoustic sub-steps per RK3 stage.
     int number_of_sub_steps = 0;
+
+    // ---- Callback function pointers for hybrid execution ----
+    // When non-NULL, the SRK3 integrator delegates to the Fortran callback.
+    // When NULL, the C++ kernel implementation is used.
+
+    /// Callback for dynamic tendency computation, or nullptr for C++.
+    mpas_compute_dyn_tend_cb_t compute_dyn_tend_cb = nullptr;
+
+    /// Callback for acoustic sub-step advance, or nullptr for C++.
+    mpas_advance_acoustic_step_cb_t advance_acoustic_step_cb = nullptr;
+
+    /// Callback for monotonic scalar transport, or nullptr for C++.
+    mpas_advance_scalars_mono_cb_t advance_scalars_mono_cb = nullptr;
+
+    /// Callback for halo exchange, or nullptr for C++.
+    mpas_halo_exchange_cb_t halo_exchange_cb = nullptr;
+
+    // ---- Per-kernel dispatch flags ----
+    // true = use C++ implementation, false = use registered Fortran callback.
+    // Automatically set by mpas_dycore_cpp_set_callbacks(): a non-NULL
+    // callback sets the flag to false (use callback); NULL sets it to true.
+
+    /// Whether to use C++ for tendency computation.
+    bool use_cpp_compute_dyn_tend = true;
+
+    /// Whether to use C++ for acoustic sub-stepping.
+    bool use_cpp_advance_acoustic_step = true;
+
+    /// Whether to use C++ for scalar transport.
+    bool use_cpp_advance_scalars_mono = true;
+
+    /// Whether to use C++ for halo exchange.
+    bool use_cpp_halo_exchange = true;
 };
 
 // ============================================================================

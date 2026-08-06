@@ -3,9 +3,9 @@
 ///
 /// **Validates: Requirements 16.1, 16.4**
 ///
-/// Property 33: Vertical Implicit Coefficients Produce Stable Tridiagonal System
-///   For physically reasonable input states, the computed tridiagonal system is stable
-///   (diagonal dominance) and all outputs are finite.
+/// Tests the faithful port of atm_compute_vert_imp_coefs_work.
+/// Property 33: All outputs are finite and the LU factorization is well-defined.
+/// Deterministic test: Constant-profile known-answer verification of alpha_tri/gamma_tri.
 
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
@@ -19,195 +19,157 @@ using namespace mpas::dycore;
 using namespace mpas::dycore::kernels;
 
 // ============================================================================
-// Property 33: Vertical Implicit Coefficients Produce Stable Tridiagonal System
+// Property 33: Vertical Implicit Coefficients — Outputs Finite & LU Well-Defined
 // ============================================================================
-// Generate physically reasonable inputs and verify that:
-// 1. alpha_tri (main diagonal) > 0 for all k (actually >= 1.0)
-// 2. a_tri and gamma_tri <= 0 (M-matrix off-diagonal structure)
-// 3. Boundary conditions: cofwr[0]==cofwz[0]==cofwt[0]==0, same at nVertLevels
-// 4. All output values are finite (no NaN/Inf)
-// 5. alpha_tri[k] >= 1.0 (structural property from definition)
-// 6. First boundary row (k=0) is strictly diagonally dominant
 
-RC_GTEST_PROP(VertImplicitStability, DiagonallyDominantTridiagonalSystem,
+RC_GTEST_PROP(VertImplicitStability, OutputsFiniteAndLUWellDefined,
               ()) {
-    // Generate random mesh dimensions
-    const auto nCells = *rc::gen::inRange(1, 8);
-    const auto nVertLevels = *rc::gen::inRange(3, 30);
-
-    // Generate physically reasonable acoustic timestep
-    // dts in [1.0, 20.0] s
-    const real_type dts = 1.0 + (*rc::gen::inRange(0, 19001)) / 1000.0;
-
-    // Physical constants from MPAS
-    const real_type gravity = constants::gravity;
-    const real_type rdry    = constants::rdry;
-    const real_type cvdry   = constants::cvdry;
-
-    // Allocate input arrays
+    const auto nCells = *rc::gen::inRange(1, 6);
+    const auto nVertLevels = *rc::gen::inRange(3, 20);
     const auto nLev = static_cast<std::size_t>(nVertLevels);
     const auto nC   = static_cast<std::size_t>(nCells);
+    const real_type dts = 1.0 + (*rc::gen::inRange(0, 19001)) / 1000.0;
 
-    // theta_m: (nVertLevels, nCells) - moist potential temperature in [250, 350] K
-    std::vector<real_type> theta_m_data(nLev * nC);
-    for (std::size_t i = 0; i < theta_m_data.size(); ++i) {
-        int raw = *rc::gen::inRange(25000, 35001); // [250.00, 350.00]
-        theta_m_data[i] = static_cast<real_type>(raw) / 100.0;
-    }
+    // Input arrays
+    std::vector<real_type> zz_data(nLev * nC);
+    for (auto& v : zz_data) v = 0.9 + (*rc::gen::inRange(0, 2001)) / 10000.0;
 
-    // rho_zz: (nVertLevels, nCells) - dry density in [0.3, 1.5] kg/m^3
-    std::vector<real_type> rho_zz_data(nLev * nC);
-    for (std::size_t i = 0; i < rho_zz_data.size(); ++i) {
-        int raw = *rc::gen::inRange(300, 1501); // [0.30, 1.50]
-        rho_zz_data[i] = static_cast<real_type>(raw) / 1000.0;
-    }
+    std::vector<real_type> p_data(nLev * nC);
+    for (auto& v : p_data) v = 80000.0 + (*rc::gen::inRange(0, 25001));
 
-    // rdzu: (nVertLevels+1) - reciprocal vertical spacing in [0.001, 0.01] 1/m
-    // (corresponding to layer thicknesses of 100-1000m)
-    std::vector<real_type> rdzu_data(static_cast<std::size_t>(nVertLevels + 1));
-    for (std::size_t i = 0; i < rdzu_data.size(); ++i) {
-        int raw = *rc::gen::inRange(10, 101); // [0.001, 0.010]
-        rdzu_data[i] = static_cast<real_type>(raw) / 10000.0;
-    }
+    std::vector<real_type> t_data(nLev * nC);
+    for (auto& v : t_data) v = 250.0 + (*rc::gen::inRange(0, 10001)) / 100.0;
 
-    // fzm/fzp: (nVertLevels+1) - interpolation weights that sum to 1.0
-    // fzm in [0.4, 0.6], fzp = 1.0 - fzm
-    std::vector<real_type> fzm_data(static_cast<std::size_t>(nVertLevels + 1));
-    std::vector<real_type> fzp_data(static_cast<std::size_t>(nVertLevels + 1));
-    for (std::size_t i = 0; i < fzm_data.size(); ++i) {
-        int raw = *rc::gen::inRange(400, 601); // [0.40, 0.60]
-        fzm_data[i] = static_cast<real_type>(raw) / 1000.0;
+    std::vector<real_type> rb_data(nLev * nC);
+    for (auto& v : rb_data) v = 0.3 + (*rc::gen::inRange(0, 12001)) / 10000.0;
+
+    std::vector<real_type> rtb_data(nLev * nC);
+    for (auto& v : rtb_data) v = 250000.0 + (*rc::gen::inRange(0, 150001));
+
+    std::vector<real_type> pb_data(nLev * nC);
+    for (auto& v : pb_data) v = 80000.0 + (*rc::gen::inRange(0, 25001));
+
+    std::vector<real_type> rt_data(nLev * nC);
+    for (auto& v : rt_data) v = (*rc::gen::inRange(-100, 101));
+
+    std::vector<real_type> cqw_data(nLev * nC);
+    for (auto& v : cqw_data) v = 0.95 + (*rc::gen::inRange(0, 501)) / 10000.0;
+
+    std::vector<real_type> qtot_data(nLev * nC);
+    for (auto& v : qtot_data) v = (*rc::gen::inRange(0, 301)) / 10000.0;
+
+    std::vector<real_type> rdzw_data(nLev);
+    for (auto& v : rdzw_data) v = 0.001 + (*rc::gen::inRange(0, 9001)) / 1000000.0;
+
+    std::vector<real_type> fzm_data(nLev);
+    std::vector<real_type> fzp_data(nLev);
+    for (std::size_t i = 0; i < nLev; ++i) {
+        fzm_data[i] = 0.4 + (*rc::gen::inRange(0, 2001)) / 10000.0;
         fzp_data[i] = 1.0 - fzm_data[i];
     }
 
-    // cqw: (nVertLevels+1, nCells) - moist coefficient in [0.95, 1.0]
-    std::vector<real_type> cqw_data(static_cast<std::size_t>(nVertLevels + 1) * nC);
-    for (std::size_t i = 0; i < cqw_data.size(); ++i) {
-        int raw = *rc::gen::inRange(950, 1001); // [0.95, 1.00]
-        cqw_data[i] = static_cast<real_type>(raw) / 1000.0;
-    }
+    std::vector<real_type> rdzu_data(nLev);
+    for (auto& v : rdzu_data) v = 0.001 + (*rc::gen::inRange(0, 9001)) / 1000000.0;
 
-    // Create const input mdspan views
-    ConstField2D<default_layout, unchecked_accessor> theta_m(
-        theta_m_data.data(), nVertLevels, nCells);
-    ConstField2D<default_layout, unchecked_accessor> rho_zz(
-        rho_zz_data.data(), nVertLevels, nCells);
-    ConstField2D<default_layout, unchecked_accessor> cqw(
-        cqw_data.data(), nVertLevels + 1, nCells);
+    std::vector<real_type> etp_data(nLev);
+    for (auto& v : etp_data) v = 0.3 + (*rc::gen::inRange(0, 4001)) / 10000.0;
 
-    // 1D span views for mesh geometry
-    using Span1D = std::mdspan<const real_type,
-        std::extents<index_type, std::dynamic_extent>>;
-    Span1D rdzu(rdzu_data.data(), nVertLevels + 1);
-    Span1D fzm(fzm_data.data(), nVertLevels + 1);
-    Span1D fzp(fzp_data.data(), nVertLevels + 1);
+    std::vector<real_type> ewp_data(nLev + 1);
+    for (auto& v : ewp_data) v = 0.3 + (*rc::gen::inRange(0, 4001)) / 10000.0;
+
+    // Create input mdspan views
+    ConstField2D<default_layout, unchecked_accessor> zz(zz_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> p_in(p_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> t_in(t_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> rb(rb_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> rtb(rtb_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> pb(pb_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> rt(rt_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> cqw(cqw_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> qtot(qtot_data.data(), nVertLevels, nCells);
+
+    ConstSpan1D rdzw(rdzw_data.data(), nVertLevels);
+    ConstSpan1D fzm(fzm_data.data(), nVertLevels);
+    ConstSpan1D fzp(fzp_data.data(), nVertLevels);
+    ConstSpan1D rdzu(rdzu_data.data(), nVertLevels);
+    ConstSpan1D etp(etp_data.data(), nVertLevels);
+    ConstSpan1D ewp(ewp_data.data(), nVertLevels + 1);
 
     // Allocate output arrays
-    std::vector<real_type> cofwr_data(static_cast<std::size_t>(nVertLevels + 1) * nC, 0.0);
-    std::vector<real_type> cofwz_data(static_cast<std::size_t>(nVertLevels + 1) * nC, 0.0);
-    std::vector<real_type> coftz_data(nLev * nC, 0.0);
-    std::vector<real_type> cofwt_data(static_cast<std::size_t>(nVertLevels + 1) * nC, 0.0);
+    std::vector<real_type> cofwr_data(nLev * nC, 0.0);
+    std::vector<real_type> cofwz_data(nLev * nC, 0.0);
+    std::vector<real_type> coftz_data((nLev + 1) * nC, 0.0);
+    std::vector<real_type> cofwt_data(nLev * nC, 0.0);
     std::vector<real_type> a_tri_data(nLev * nC, 0.0);
     std::vector<real_type> alpha_tri_data(nLev * nC, 0.0);
     std::vector<real_type> gamma_tri_data(nLev * nC, 0.0);
-    std::vector<real_type> cofrz_data(nLev * nC, 0.0);
+    std::vector<real_type> cofrz_data(nLev, 0.0);
 
     // Create output mdspan views
-    Field2D<default_layout, unchecked_accessor> cofwr(
-        cofwr_data.data(), nVertLevels + 1, nCells);
-    Field2D<default_layout, unchecked_accessor> cofwz(
-        cofwz_data.data(), nVertLevels + 1, nCells);
-    Field2D<default_layout, unchecked_accessor> coftz(
-        coftz_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> cofwt(
-        cofwt_data.data(), nVertLevels + 1, nCells);
-    Field2D<default_layout, unchecked_accessor> a_tri(
-        a_tri_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> alpha_tri(
-        alpha_tri_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> gamma_tri(
-        gamma_tri_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> cofrz(
-        cofrz_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> cofwr_out(cofwr_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> cofwz_out(cofwz_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> coftz_out(coftz_data.data(), nVertLevels + 1, nCells);
+    Field2D<default_layout, unchecked_accessor> cofwt_out(cofwt_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> a_tri_out(a_tri_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> alpha_out(alpha_tri_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> gamma_out(gamma_tri_data.data(), nVertLevels, nCells);
+    Span1D cofrz_out(cofrz_data.data(), nVertLevels);
 
     // Call the kernel
     compute_vert_imp_coefs<default_layout>(
         SerialPolicy{},
-        cofwr, cofwz, coftz, cofwt,
-        a_tri, alpha_tri, gamma_tri, cofrz,
-        theta_m, rho_zz, cqw,
-        rdzu, fzm, fzp,
-        dts, gravity, rdry, cvdry,
+        cofwr_out, cofwz_out, coftz_out, cofwt_out,
+        a_tri_out, alpha_out, gamma_out, cofrz_out,
+        zz, p_in, t_in, rb, rtb, pb, rt, cqw, qtot,
+        rdzw, fzm, fzp, rdzu, etp, ewp,
+        dts,
         static_cast<index_type>(nCells),
         static_cast<index_type>(nVertLevels));
 
-    // Verify properties for each cell column
+    // Property 1: cofrz[k] == rdzw[k]
+    for (index_type k = 0; k < static_cast<index_type>(nVertLevels); ++k) {
+        RC_ASSERT(cofrz_out[k] == rdzw_data[static_cast<std::size_t>(k)]);
+    }
+
     for (index_type iCell = 0; iCell < static_cast<index_type>(nCells); ++iCell) {
-        // Property 1: Boundary conditions
-        auto cofwr_top = cofwr[0, iCell];
-        auto cofwz_top = cofwz[0, iCell];
-        auto cofwt_top = cofwt[0, iCell];
-        RC_ASSERT(cofwr_top == 0.0);
-        RC_ASSERT(cofwz_top == 0.0);
-        RC_ASSERT(cofwt_top == 0.0);
+        // Property 2: coftz boundary conditions
+        auto coftz_top = coftz_out[0, iCell];
+        auto coftz_bot = coftz_out[static_cast<index_type>(nVertLevels), iCell];
+        RC_ASSERT(coftz_top == 0.0);
+        RC_ASSERT(coftz_bot == 0.0);
 
-        auto cofwr_bot = cofwr[static_cast<index_type>(nVertLevels), iCell];
-        auto cofwz_bot = cofwz[static_cast<index_type>(nVertLevels), iCell];
-        auto cofwt_bot = cofwt[static_cast<index_type>(nVertLevels), iCell];
-        RC_ASSERT(cofwr_bot == 0.0);
-        RC_ASSERT(cofwz_bot == 0.0);
-        RC_ASSERT(cofwt_bot == 0.0);
+        // Property 3: Initialization at k=0
+        auto a0 = a_tri_out[0, iCell];
+        auto g0 = gamma_out[0, iCell];
+        auto al0 = alpha_out[0, iCell];
+        RC_ASSERT(a0 == 0.0);
+        RC_ASSERT(g0 == 0.0);
+        RC_ASSERT(al0 == 0.0);
 
+        // Property 4: All outputs finite
         for (index_type k = 0; k < static_cast<index_type>(nVertLevels); ++k) {
-            // Property 2: All output values are finite
-            auto val_cofwr = cofwr[k, iCell];
-            auto val_cofwz = cofwz[k, iCell];
-            auto val_coftz = coftz[k, iCell];
-            auto val_cofwt = cofwt[k, iCell];
-            auto val_a_tri = a_tri[k, iCell];
-            auto val_alpha = alpha_tri[k, iCell];
-            auto val_gamma = gamma_tri[k, iCell];
-            auto val_cofrz = cofrz[k, iCell];
-
-            RC_ASSERT(std::isfinite(val_cofwr));
-            RC_ASSERT(std::isfinite(val_cofwz));
-            RC_ASSERT(std::isfinite(val_coftz));
-            RC_ASSERT(std::isfinite(val_cofwt));
-            RC_ASSERT(std::isfinite(val_a_tri));
-            RC_ASSERT(std::isfinite(val_alpha));
-            RC_ASSERT(std::isfinite(val_gamma));
-            RC_ASSERT(std::isfinite(val_cofrz));
-
-            // Property 3: alpha_tri (main diagonal) > 0 for all k
-            RC_ASSERT(val_alpha > 0.0);
-
-            // Property 4: Off-diagonals are non-positive (M-matrix structure)
-            // a_tri and gamma_tri should be <= 0 since they are products of
-            // positive cofwz and positive coftz, negated.
-            RC_ASSERT(val_a_tri <= 0.0);
-            RC_ASSERT(val_gamma <= 0.0);
+            auto v1 = cofwr_out[k, iCell];
+            auto v2 = cofwz_out[k, iCell];
+            auto v3 = cofwt_out[k, iCell];
+            auto v4 = a_tri_out[k, iCell];
+            auto v5 = alpha_out[k, iCell];
+            auto v6 = gamma_out[k, iCell];
+            RC_ASSERT(std::isfinite(v1));
+            RC_ASSERT(std::isfinite(v2));
+            RC_ASSERT(std::isfinite(v3));
+            RC_ASSERT(std::isfinite(v4));
+            RC_ASSERT(std::isfinite(v5));
+            RC_ASSERT(std::isfinite(v6));
+        }
+        for (index_type k = 0; k <= static_cast<index_type>(nVertLevels); ++k) {
+            auto v = coftz_out[k, iCell];
+            RC_ASSERT(std::isfinite(v));
         }
 
-        // Check finiteness for the last interface level outputs
-        auto cofwr_last = cofwr[static_cast<index_type>(nVertLevels), iCell];
-        auto cofwz_last = cofwz[static_cast<index_type>(nVertLevels), iCell];
-        auto cofwt_last = cofwt[static_cast<index_type>(nVertLevels), iCell];
-        RC_ASSERT(std::isfinite(cofwr_last));
-        RC_ASSERT(std::isfinite(cofwz_last));
-        RC_ASSERT(std::isfinite(cofwt_last));
-
-        // Property 5: alpha_tri[k] >= 1.0 always (since cofwz, coftz >= 0).
-        for (index_type k = 0; k < static_cast<index_type>(nVertLevels); ++k) {
-            auto val_alpha = alpha_tri[k, iCell];
-            RC_ASSERT(val_alpha >= 1.0);
-        }
-
-        // Property 6: First boundary row (k=0) IS diagonally dominant.
-        {
-            auto a_first = a_tri[0, iCell];
-            auto g_first = gamma_tri[0, iCell];
-            auto d_first = alpha_tri[0, iCell];
-            RC_ASSERT(d_first >= std::abs(a_first) + std::abs(g_first));
+        // Property 5: alpha_tri[k] != 0 for k>=1 (LU factorization valid)
+        for (index_type k = 1; k < static_cast<index_type>(nVertLevels); ++k) {
+            auto val = alpha_out[k, iCell];
+            RC_ASSERT(val != 0.0);
         }
     }
 }
@@ -215,221 +177,223 @@ RC_GTEST_PROP(VertImplicitStability, DiagonallyDominantTridiagonalSystem,
 // ============================================================================
 // Deterministic Test: Constant profile known-answer verification
 // ============================================================================
-// Use constant theta_m=300, rho_zz=1.0, cqw=1.0, dts=5.0
-// rdzu=0.002 (500m layers), fzm=0.5, fzp=0.5
-// Verify the computed values match hand computation.
+// Verify the LU factorization (alpha_tri, gamma_tri) matches hand computation.
 
-TEST(VertImplicitDeterministic, ConstantProfileKnownAnswer) {
+TEST(VertImplicitDeterministic, ConstantProfileLUFactorization) {
     const index_type nCells = 1;
     const index_type nVertLevels = 5;
+    const real_type dts = 5.0;
 
-    // Physical constants
-    const real_type gravity = constants::gravity;
-    const real_type rdry    = constants::rdry;
-    const real_type cvdry   = constants::cvdry;
-    const real_type dts     = 5.0;
+    const real_type rgas = constants::rdry;
+    const real_type cp   = constants::cpdry;
+    const real_type grav = constants::gravity;
+    const real_type rcv  = rgas / (cp - rgas);
+    const real_type c2   = cp * rcv;
 
-    // Off-centering parameter used in the kernel
-    constexpr real_type epssm = 0.5;
+    // Constant input values
+    const real_type zz_val   = 1.0;
+    const real_type p_val    = 100000.0;
+    const real_type t_val    = 300.0;
+    const real_type rb_val   = 1.0;
+    const real_type rtb_val  = 300000.0;
+    const real_type pb_val   = 100000.0;
+    const real_type rt_val   = 0.0;
+    const real_type cqw_val  = 1.0;
+    const real_type qtot_val = 0.0;
+    const real_type rdzw_val = 0.002;
+    const real_type fzm_val  = 0.5;
+    const real_type fzp_val  = 0.5;
+    const real_type rdzu_val = 0.002;
+    const real_type etp_val  = 0.5;
+    const real_type ewp_val  = 0.5;
 
-    // Constant input fields
-    const real_type theta_m_val = 300.0;
-    const real_type rho_zz_val  = 1.0;
-    const real_type rdzu_val    = 0.002;  // 1/500m
-    const real_type fzm_val     = 0.5;
-    const real_type fzp_val     = 0.5;
+    const std::size_t nLev = static_cast<std::size_t>(nVertLevels);
 
     // Allocate input arrays
-    std::vector<real_type> theta_m_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), theta_m_val);
-    std::vector<real_type> rho_zz_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), rho_zz_val);
-    std::vector<real_type> cqw_data(
-        static_cast<std::size_t>(nVertLevels + 1) * static_cast<std::size_t>(nCells), 1.0);
-    std::vector<real_type> rdzu_data(
-        static_cast<std::size_t>(nVertLevels + 1), rdzu_val);
-    std::vector<real_type> fzm_data(
-        static_cast<std::size_t>(nVertLevels + 1), fzm_val);
-    std::vector<real_type> fzp_data(
-        static_cast<std::size_t>(nVertLevels + 1), fzp_val);
+    std::vector<real_type> zz_data(nLev, zz_val);
+    std::vector<real_type> p_data(nLev, p_val);
+    std::vector<real_type> t_data(nLev, t_val);
+    std::vector<real_type> rb_data(nLev, rb_val);
+    std::vector<real_type> rtb_data(nLev, rtb_val);
+    std::vector<real_type> pb_data(nLev, pb_val);
+    std::vector<real_type> rt_data(nLev, rt_val);
+    std::vector<real_type> cqw_data(nLev, cqw_val);
+    std::vector<real_type> qtot_data(nLev, qtot_val);
+    std::vector<real_type> rdzw_data(nLev, rdzw_val);
+    std::vector<real_type> fzm_data(nLev, fzm_val);
+    std::vector<real_type> fzp_data(nLev, fzp_val);
+    std::vector<real_type> rdzu_data(nLev, rdzu_val);
+    std::vector<real_type> etp_data(nLev, etp_val);
+    std::vector<real_type> ewp_data(nLev + 1, ewp_val);
 
     // Create input mdspan views
-    ConstField2D<default_layout, unchecked_accessor> theta_m(
-        theta_m_data.data(), nVertLevels, nCells);
-    ConstField2D<default_layout, unchecked_accessor> rho_zz(
-        rho_zz_data.data(), nVertLevels, nCells);
-    ConstField2D<default_layout, unchecked_accessor> cqw(
-        cqw_data.data(), nVertLevels + 1, nCells);
+    ConstField2D<default_layout, unchecked_accessor> zz(zz_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> p_in(p_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> t_in(t_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> rb(rb_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> rtb(rtb_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> pb(pb_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> rt(rt_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> cqw(cqw_data.data(), nVertLevels, nCells);
+    ConstField2D<default_layout, unchecked_accessor> qtot(qtot_data.data(), nVertLevels, nCells);
 
-    using Span1D = std::mdspan<const real_type,
-        std::extents<index_type, std::dynamic_extent>>;
-    Span1D rdzu(rdzu_data.data(), nVertLevels + 1);
-    Span1D fzm(fzm_data.data(), nVertLevels + 1);
-    Span1D fzp(fzp_data.data(), nVertLevels + 1);
+    ConstSpan1D rdzw(rdzw_data.data(), nVertLevels);
+    ConstSpan1D fzm(fzm_data.data(), nVertLevels);
+    ConstSpan1D fzp(fzp_data.data(), nVertLevels);
+    ConstSpan1D rdzu(rdzu_data.data(), nVertLevels);
+    ConstSpan1D etp(etp_data.data(), nVertLevels);
+    ConstSpan1D ewp(ewp_data.data(), nVertLevels + 1);
 
     // Allocate output arrays
-    std::vector<real_type> cofwr_data(
-        static_cast<std::size_t>(nVertLevels + 1) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> cofwz_data(
-        static_cast<std::size_t>(nVertLevels + 1) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> coftz_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> cofwt_data(
-        static_cast<std::size_t>(nVertLevels + 1) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> a_tri_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> alpha_tri_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> gamma_tri_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), 0.0);
-    std::vector<real_type> cofrz_data(
-        static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells), 0.0);
+    std::vector<real_type> cofwr_data(nLev, 0.0);
+    std::vector<real_type> cofwz_data(nLev, 0.0);
+    std::vector<real_type> coftz_data(nLev + 1, 0.0);
+    std::vector<real_type> cofwt_data(nLev, 0.0);
+    std::vector<real_type> a_tri_data(nLev, 0.0);
+    std::vector<real_type> alpha_tri_data(nLev, 0.0);
+    std::vector<real_type> gamma_tri_data(nLev, 0.0);
+    std::vector<real_type> cofrz_data(nLev, 0.0);
 
     // Create output mdspan views
-    Field2D<default_layout, unchecked_accessor> cofwr(
-        cofwr_data.data(), nVertLevels + 1, nCells);
-    Field2D<default_layout, unchecked_accessor> cofwz(
-        cofwz_data.data(), nVertLevels + 1, nCells);
-    Field2D<default_layout, unchecked_accessor> coftz(
-        coftz_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> cofwt(
-        cofwt_data.data(), nVertLevels + 1, nCells);
-    Field2D<default_layout, unchecked_accessor> a_tri(
-        a_tri_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> alpha_tri(
-        alpha_tri_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> gamma_tri(
-        gamma_tri_data.data(), nVertLevels, nCells);
-    Field2D<default_layout, unchecked_accessor> cofrz(
-        cofrz_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> cofwr_out(cofwr_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> cofwz_out(cofwz_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> coftz_out(coftz_data.data(), nVertLevels + 1, nCells);
+    Field2D<default_layout, unchecked_accessor> cofwt_out(cofwt_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> a_tri_out(a_tri_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> alpha_out(alpha_tri_data.data(), nVertLevels, nCells);
+    Field2D<default_layout, unchecked_accessor> gamma_out(gamma_tri_data.data(), nVertLevels, nCells);
+    Span1D cofrz_out(cofrz_data.data(), nVertLevels);
 
     // Call the kernel
     compute_vert_imp_coefs<default_layout>(
         SerialPolicy{},
-        cofwr, cofwz, coftz, cofwt,
-        a_tri, alpha_tri, gamma_tri, cofrz,
-        theta_m, rho_zz, cqw,
-        rdzu, fzm, fzp,
-        dts, gravity, rdry, cvdry,
-        nCells, nVertLevels);
-
-    // Hand-computed expected values for constant profiles:
-    // Interface values (for interior k=1..nVertLevels-1):
-    //   theta_interface = 0.5*300 + 0.5*300 = 300
-    //   rho_interface   = 0.5*1.0 + 0.5*1.0 = 1.0
-    //
-    // cofwr[k] = epssm * dts * rho_interface * rdzu
-    const real_type expected_cofwr = epssm * dts * 1.0 * rdzu_val;
-
-    // cofwz[k] = epssm * dts * (rdry/cvdry) * theta_interface * rdzu * cqw
-    const real_type rcv = rdry / cvdry;
-    const real_type expected_cofwz = epssm * dts * rcv * 300.0 * rdzu_val * 1.0;
-
-    // coftz[k] = epssm * dts * gravity * rho_zz[k]
-    const real_type expected_coftz = epssm * dts * gravity * 1.0;
-
-    // cofwt[k] = epssm * dts * (theta_m[k] - theta_m[k-1]) * rdzu
-    // For constant profile: theta_m[k] - theta_m[k-1] = 0
-    const real_type expected_cofwt = 0.0;
-
-    // cofrz[k] = cofwr[k] * rho_zz[k]
-    const real_type expected_cofrz_interior = expected_cofwr * 1.0;
-
-    // Tridiagonal coefficients:
-    // a_tri[k] = -cofwz[k] * coftz[k]
-    const real_type expected_a_tri_interior = -expected_cofwz * expected_coftz;
-
-    // gamma_tri[k] = -cofwz[k+1] * coftz[k]
-    const real_type expected_gamma_tri_interior = -expected_cofwz * expected_coftz;
-
-    // alpha_tri[k] = 1 + cofwz[k]*coftz[k-1] + cofwz[k+1]*coftz[k]
-    const real_type wz_tz_product = expected_cofwz * expected_coftz;
+        cofwr_out, cofwz_out, coftz_out, cofwt_out,
+        a_tri_out, alpha_out, gamma_out, cofrz_out,
+        zz, p_in, t_in, rb, rtb, pb, rt, cqw, qtot,
+        rdzw, fzm, fzp, rdzu, etp, ewp,
+        dts, nCells, nVertLevels);
 
     const real_type tol = 1.0e-10;
 
-    // Verify boundary conditions
-    {
-        auto v_cofwr_top = cofwr[0, 0];
-        auto v_cofwz_top = cofwz[0, 0];
-        auto v_cofwt_top = cofwt[0, 0];
-        EXPECT_DOUBLE_EQ(v_cofwr_top, 0.0);
-        EXPECT_DOUBLE_EQ(v_cofwz_top, 0.0);
-        EXPECT_DOUBLE_EQ(v_cofwt_top, 0.0);
-
-        auto v_cofwr_bot = cofwr[nVertLevels, 0];
-        auto v_cofwz_bot = cofwz[nVertLevels, 0];
-        auto v_cofwt_bot = cofwt[nVertLevels, 0];
-        EXPECT_DOUBLE_EQ(v_cofwr_bot, 0.0);
-        EXPECT_DOUBLE_EQ(v_cofwz_bot, 0.0);
-        EXPECT_DOUBLE_EQ(v_cofwt_bot, 0.0);
-    }
-
-    // Verify interior interface coefficients
-    for (index_type k = 1; k < nVertLevels; ++k) {
-        auto val_cofwr = cofwr[k, 0];
-        auto val_cofwz = cofwz[k, 0];
-        auto val_cofwt = cofwt[k, 0];
-        EXPECT_NEAR(val_cofwr, expected_cofwr, tol)
-            << "cofwr mismatch at k=" << k;
-        EXPECT_NEAR(val_cofwz, expected_cofwz, tol)
-            << "cofwz mismatch at k=" << k;
-        EXPECT_NEAR(val_cofwt, expected_cofwt, tol)
-            << "cofwt mismatch at k=" << k;
-    }
-
-    // Verify level-centered coefficients
-    for (index_type k = 0; k < nVertLevels; ++k) {
-        auto val_coftz = coftz[k, 0];
-        EXPECT_NEAR(val_coftz, expected_coftz, tol)
-            << "coftz mismatch at k=" << k;
-    }
-
     // Verify cofrz
-    auto cofrz_top = cofrz[0, 0];
-    EXPECT_NEAR(cofrz_top, 0.0, tol); // cofwr[0]=0
-    for (index_type k = 1; k < nVertLevels; ++k) {
-        auto val_cofrz = cofrz[k, 0];
-        EXPECT_NEAR(val_cofrz, expected_cofrz_interior, tol)
-            << "cofrz mismatch at k=" << k;
-    }
-
-    // Verify tridiagonal coefficients
-    // k=0: a_tri=0, gamma_tri=-cofwz[1]*coftz[0], alpha_tri=1+cofwz[1]*coftz[0]
-    auto a_tri_0 = a_tri[0, 0];
-    auto gamma_tri_0 = gamma_tri[0, 0];
-    auto alpha_tri_0 = alpha_tri[0, 0];
-    EXPECT_NEAR(a_tri_0, 0.0, tol);
-    EXPECT_NEAR(gamma_tri_0, expected_gamma_tri_interior, tol);
-    EXPECT_NEAR(alpha_tri_0, 1.0 + wz_tz_product, tol);
-
-    // Interior levels: k=1..nVertLevels-2
-    for (index_type k = 1; k < nVertLevels - 1; ++k) {
-        auto val_a = a_tri[k, 0];
-        auto val_g = gamma_tri[k, 0];
-        auto val_alpha = alpha_tri[k, 0];
-        EXPECT_NEAR(val_a, expected_a_tri_interior, tol)
-            << "a_tri mismatch at k=" << k;
-        EXPECT_NEAR(val_g, expected_gamma_tri_interior, tol)
-            << "gamma_tri mismatch at k=" << k;
-        EXPECT_NEAR(val_alpha, 1.0 + 2.0 * wz_tz_product, tol)
-            << "alpha_tri mismatch at k=" << k;
-    }
-
-    // k=nVertLevels-1: gamma_tri=0, a_tri=-cofwz[nVL-1]*coftz[nVL-1]
-    auto a_tri_last = a_tri[nVertLevels - 1, 0];
-    auto gamma_tri_last = gamma_tri[nVertLevels - 1, 0];
-    auto alpha_tri_last = alpha_tri[nVertLevels - 1, 0];
-    EXPECT_NEAR(a_tri_last, expected_a_tri_interior, tol);
-    EXPECT_NEAR(gamma_tri_last, 0.0, tol);
-    EXPECT_NEAR(alpha_tri_last, 1.0 + wz_tz_product, tol);
-
-    // Verify diagonal dominance for the constant profile case
     for (index_type k = 0; k < nVertLevels; ++k) {
-        auto diag = alpha_tri[k, 0];
-        auto val_a = a_tri[k, 0];
-        auto val_g = gamma_tri[k, 0];
-        real_type off_diag_sum = std::abs(val_a) + std::abs(val_g);
-        EXPECT_GE(diag, off_diag_sum)
-            << "Diagonal dominance violated at k=" << k;
+        EXPECT_DOUBLE_EQ(cofrz_out[k], rdzw_val);
+    }
+
+    // Hand-computed expected intermediate values for constant profile:
+    // cofwr[k] = 0.5*gravity*(fzm*zz + fzp*zz) = 0.5*grav*1.0 = 0.5*gravity
+    const real_type exp_cofwr = 0.5 * grav * (fzm_val * zz_val + fzp_val * zz_val);
+
+    // coftz[k] = fzm*t + fzp*t = 300.0 for interior, 0 at boundaries
+    const real_type exp_coftz = fzm_val * t_val + fzp_val * t_val;
+
+    // cofwz[k] = c2*(fzm*zz+fzp*zz)*rdzu*cqw*(fzm*p+fzp*p)
+    const real_type zz_iface = fzm_val * zz_val + fzp_val * zz_val;
+    const real_type p_iface  = fzm_val * p_val + fzp_val * p_val;
+    const real_type exp_cofwz = c2 * zz_iface * rdzu_val * cqw_val * p_iface;
+
+    // cofwt[k] = 0.5*rcv*zz*gravity*rb/(1+qtot) * p/((rtb+rt)*pb)
+    const real_type exp_cofwt = 0.5 * rcv * zz_val * grav * rb_val / (1.0 + qtot_val)
+                                * p_val / ((rtb_val + rt_val) * pb_val);
+
+    // Verify intermediate coefficients
+    for (index_type k = 1; k < nVertLevels; ++k) {
+        auto v_cofwr = cofwr_out[k, 0];
+        auto v_cofwz = cofwz_out[k, 0];
+        EXPECT_NEAR(v_cofwr, exp_cofwr, tol) << "cofwr at k=" << k;
+        EXPECT_NEAR(v_cofwz, exp_cofwz, tol) << "cofwz at k=" << k;
+    }
+
+    auto coftz_0 = coftz_out[0, 0];
+    EXPECT_DOUBLE_EQ(coftz_0, 0.0);
+    for (index_type k = 1; k < nVertLevels; ++k) {
+        auto v = coftz_out[k, 0];
+        EXPECT_NEAR(v, exp_coftz, tol) << "coftz at k=" << k;
+    }
+    auto coftz_top = coftz_out[nVertLevels, 0];
+    EXPECT_DOUBLE_EQ(coftz_top, 0.0);
+
+    for (index_type k = 0; k < nVertLevels; ++k) {
+        auto v = cofwt_out[k, 0];
+        EXPECT_NEAR(v, exp_cofwt, tol) << "cofwt at k=" << k;
+    }
+
+    // ---- Verify LU factorization by recomputing the forward sweep ----
+    // Recompute a_tri, b_tri, c_tri from the expected constant values,
+    // then run the forward sweep and compare.
+    const real_type dts2 = dts * dts;
+
+    // Helper to get coftz for a given index
+    auto get_coftz = [&](index_type k) -> real_type {
+        if (k == 0 || k == nVertLevels) return 0.0;
+        return exp_coftz;
+    };
+
+    std::vector<real_type> a_hand(nLev, 0.0);
+    std::vector<real_type> b_hand(nLev, 0.0);
+    std::vector<real_type> c_hand(nLev, 0.0);
+
+    for (index_type k = 1; k < nVertLevels; ++k) {
+        auto ki = static_cast<std::size_t>(k);
+        // a_tri(k) = (-cofwz*coftz(k-1)*rdzw*zz + cofwr*cofrz(k-1) - cofwt*coftz(k-1)*rdzw)
+        //            * etp(k-1)*ewp(k-1)
+        a_hand[ki] = (-exp_cofwz * get_coftz(k - 1) * rdzw_val * zz_val
+                      + exp_cofwr * rdzw_val
+                      - exp_cofwt * get_coftz(k - 1) * rdzw_val)
+                     * etp_val * ewp_val;
+
+        // b_tri(k) = (cofwz*coftz(k)*(etp*rdzw*zz + etp*rdzw*zz)
+        //            - coftz(k)*(etp*cofwt*rdzw - etp*cofwt*rdzw)
+        //            + cofwr*(etp*cofrz(k) - etp*cofrz(k-1))) * ewp
+        b_hand[ki] = (exp_cofwz * get_coftz(k)
+                          * (etp_val * rdzw_val * zz_val + etp_val * rdzw_val * zz_val)
+                      - get_coftz(k)
+                          * (etp_val * exp_cofwt * rdzw_val - etp_val * exp_cofwt * rdzw_val)
+                      + exp_cofwr
+                          * (etp_val * rdzw_val - etp_val * rdzw_val))
+                     * ewp_val;
+
+        // c_tri(k) = (-cofwz*coftz(k+1)*rdzw*zz - cofwr*cofrz(k) + cofwt*coftz(k+1)*rdzw)
+        //            * etp(k)*ewp(k+1)
+        c_hand[ki] = (-exp_cofwz * get_coftz(k + 1) * rdzw_val * zz_val
+                      - exp_cofwr * rdzw_val
+                      + exp_cofwt * get_coftz(k + 1) * rdzw_val)
+                     * etp_val * ewp_val;
+    }
+    c_hand[nLev - 1] = 0.0;
+
+    // Forward sweep
+    std::vector<real_type> alpha_hand(nLev, 0.0);
+    std::vector<real_type> gamma_hand(nLev, 0.0);
+
+    for (index_type k = 1; k < nVertLevels; ++k) {
+        auto ki = static_cast<std::size_t>(k);
+        alpha_hand[ki] = 1.0 / (1.0 + dts2 * (b_hand[ki] - a_hand[ki] * gamma_hand[ki - 1]));
+        gamma_hand[ki] = dts2 * c_hand[ki] * alpha_hand[ki];
+    }
+
+    // Verify alpha_tri and gamma_tri match
+    auto al0 = alpha_out[0, 0];
+    auto gm0 = gamma_out[0, 0];
+    EXPECT_DOUBLE_EQ(al0, 0.0);
+    EXPECT_DOUBLE_EQ(gm0, 0.0);
+
+    for (index_type k = 1; k < nVertLevels; ++k) {
+        auto ki = static_cast<std::size_t>(k);
+        auto val_alpha = alpha_out[k, 0];
+        auto val_gamma = gamma_out[k, 0];
+        EXPECT_NEAR(val_alpha, alpha_hand[ki], tol)
+            << "alpha_tri mismatch at k=" << k;
+        EXPECT_NEAR(val_gamma, gamma_hand[ki], tol)
+            << "gamma_tri mismatch at k=" << k;
+    }
+
+    // Also verify a_tri matches
+    auto a0 = a_tri_out[0, 0];
+    EXPECT_DOUBLE_EQ(a0, 0.0);
+    for (index_type k = 1; k < nVertLevels; ++k) {
+        auto ki = static_cast<std::size_t>(k);
+        auto val_a = a_tri_out[k, 0];
+        EXPECT_NEAR(val_a, a_hand[ki], tol) << "a_tri mismatch at k=" << k;
     }
 }

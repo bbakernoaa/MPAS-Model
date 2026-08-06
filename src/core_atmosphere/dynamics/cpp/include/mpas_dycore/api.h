@@ -140,6 +140,228 @@ int mpas_dycore_cpp_timestep(
  */
 int mpas_dycore_cpp_finalize(char* errmsg, int errmsg_len);
 
+/**
+ * @brief Set mesh geometry, metric, base-state, and stencil data.
+ *
+ * Must be called after a successful mpas_dycore_cpp_init() and before timestep
+ * execution. Copies all geometry arrays into owned storage inside DycoreState.
+ *
+ * @param areaCell           Cell areas (nCells).
+ * @param invAreaCell        Inverse cell areas (nCells).
+ * @param dvEdge             Edge lengths dvEdge (nEdges).
+ * @param dcEdge             Edge lengths dcEdge (nEdges).
+ * @param invDcEdge          Inverse dcEdge (nEdges).
+ * @param rdzw               Vertical metric rdzw (nVertLevels).
+ * @param rdzu               Vertical metric rdzu (nVertLevels).
+ * @param fzm                Vertical interpolation weight fzm (nVertLevels).
+ * @param fzp                Vertical interpolation weight fzp (nVertLevels).
+ * @param etp                Vertical extrapolation weight etp (nVertLevels).
+ * @param etm                Vertical extrapolation weight etm (nVertLevels).
+ * @param ewp                Vertical weight ewp (nVertLevels+1).
+ * @param ewm                Vertical weight ewm (nVertLevels+1).
+ * @param zz                 Terrain metric dz/dzeta (nVertLevels x nCells).
+ * @param rb                 Base-state density (nVertLevels x nCells).
+ * @param rtb                Base-state rho*theta (nVertLevels x nCells).
+ * @param pb                 Base-state pressure (nVertLevels x nCells).
+ * @param edgesOnCell_sign   Edge orientation signs (maxEdges x nCells).
+ * @param specZoneMaskEdge   Specified zone edge mask (nEdges).
+ * @param specZoneMaskCell   Specified zone cell mask (nCells).
+ * @param weightsOnEdge      TRiSK reconstruction weights (nEdges x maxEdges2).
+ * @param nEdgesOnEdge       Edge neighbor counts (nEdges).
+ * @param edgesOnEdge        Edge-on-edge connectivity (nEdges x maxEdges2).
+ * @param advCellsForEdge    Advection cell stencils (nEdges x maxAdvCells).
+ * @param nAdvCellsForEdge   Advection cell counts (nEdges).
+ * @param adv_coefs          Advection coefficients (maxAdvCells x nEdges).
+ * @param adv_coefs_3rd      3rd-order advection coefficients (maxAdvCells x nEdges).
+ * @param fVertex            Coriolis parameter at vertices (nVertices).
+ * @param areaTriangle       Triangle areas at vertices (nVertices).
+ * @param zb_cell_ptr        Terrain slope metric ((nVertLevels+1) x maxEdges x nCells), or NULL.
+ * @param zb3_cell_ptr       3rd-order terrain correction ((nVertLevels+1) x maxEdges x nCells), or NULL.
+ * @param rho_base_ptr       Base-state density for perturbation formulation (nVertLevels x nCells), or NULL.
+ * @param rtheta_base_ptr    Base-state rho*theta for perturbation formulation (nVertLevels x nCells), or NULL.
+ * @param exner_base_ptr     Base-state Exner function (nVertLevels x nCells), or NULL.
+ * @param cf1                Vertical extrapolation coefficient 1.
+ * @param cf2                Vertical extrapolation coefficient 2.
+ * @param cf3                Vertical extrapolation coefficient 3.
+ * @param nEdgesOnCell_ptr   Per-cell edge counts for terrain correction (nCells), or NULL.
+ * @param nCells             Number of cells in local partition.
+ * @param nEdges             Number of edges in local partition.
+ * @param nVertices          Number of vertices in local partition.
+ * @param nVertLevels        Number of vertical levels.
+ * @param maxEdges           Maximum edges per cell (for edgesOnCell_sign).
+ * @param maxEdges2          Maximum edges for TRiSK reconstruction.
+ * @param maxAdvCells        Maximum advection stencil cells per edge.
+ * @param errmsg             Buffer for error message output.
+ * @param errmsg_len         Maximum length of error message buffer.
+ * @return 0 on success, 1-255 on error.
+ */
+int mpas_dycore_cpp_set_geometry(
+    /* Cell geometry */
+    const double* areaCell, const double* invAreaCell,
+    /* Edge geometry */
+    const double* dvEdge, const double* dcEdge, const double* invDcEdge,
+    /* Vertical metrics */
+    const double* rdzw, const double* rdzu,
+    const double* fzm, const double* fzp,
+    const double* etp, const double* etm,
+    const double* ewp, const double* ewm,
+    /* Terrain metric */
+    const double* zz,
+    /* Base-state profiles */
+    const double* rb, const double* rtb, const double* pb,
+    /* Edge orientation signs */
+    const double* edgesOnCell_sign,
+    /* Specified zone masks */
+    const double* specZoneMaskEdge, const double* specZoneMaskCell,
+    /* Edge reconstruction data (TRiSK) */
+    const double* weightsOnEdge,
+    const int* nEdgesOnEdge,
+    const int* edgesOnEdge,
+    /* Advection stencils */
+    const int* advCellsForEdge,
+    const int* nAdvCellsForEdge,
+    const double* adv_coefs,
+    const double* adv_coefs_3rd,
+    /* Vertex geometry */
+    const double* fVertex, const double* areaTriangle,
+    /* Terrain correction arrays for w recovery */
+    const double* zb_cell_ptr, const double* zb3_cell_ptr,
+    /* Base-state profiles for perturbation formulation */
+    const double* rho_base_ptr, const double* rtheta_base_ptr, const double* exner_base_ptr,
+    /* Vertical extrapolation coefficients */
+    double cf1, double cf2, double cf3,
+    /* Per-cell edge count for terrain correction */
+    const int* nEdgesOnCell_ptr,
+    /* Dimension metadata */
+    int nCells, int nEdges, int nVertices, int nVertLevels,
+    int maxEdges, int maxEdges2, int maxAdvCells,
+    /* Error output */
+    char* errmsg, int errmsg_len
+);
+
+/* ======================================================================
+ * Callback type definitions for hybrid Fortran/C++ execution mode.
+ *
+ * These function pointer types define the signatures for Fortran callback
+ * routines that the C++ SRK3 integrator can invoke for kernels configured
+ * for Fortran delegation. Each callback receives workspace pointers directly
+ * (no copy) and operates on the same memory as the C++ dycore.
+ *
+ * Requirements: 8.1, 8.3, 8.6
+ * ====================================================================== */
+
+/**
+ * @brief Callback for computing dynamic tendencies.
+ *
+ * Invoked at each Runge-Kutta stage to compute the tendencies for horizontal
+ * velocity (u), potential temperature (theta_m), dry density (rho_zz), and
+ * vertical velocity (w).
+ *
+ * @param u            Horizontal velocity field (nVertLevels x nEdges), read.
+ * @param theta_m      Potential temperature (nVertLevels x nCells), read.
+ * @param rho_zz       Dry air density (nVertLevels x nCells), read.
+ * @param w            Vertical velocity ((nVertLevels+1) x nCells), read.
+ * @param tend_u       Tendency for u (nVertLevels x nEdges), write.
+ * @param tend_theta   Tendency for theta (nVertLevels x nCells), write.
+ * @param tend_rho     Tendency for rho_zz (nVertLevels x nCells), write.
+ * @param tend_w       Tendency for w ((nVertLevels+1) x nCells), write.
+ * @param nVertLevels  Number of vertical levels.
+ * @param nCells       Number of cells.
+ * @param nEdges       Number of edges.
+ * @param rk_step      Current Runge-Kutta step (0, 1, or 2).
+ * @param dt_rk        Timestep for this RK stage (seconds).
+ */
+typedef void (*mpas_compute_dyn_tend_cb_t)(
+    double* u, double* theta_m, double* rho_zz, double* w,
+    double* tend_u, double* tend_theta, double* tend_rho, double* tend_w,
+    int nVertLevels, int nCells, int nEdges, int rk_step, double dt_rk);
+
+/**
+ * @brief Callback for advancing one acoustic sub-step.
+ *
+ * Invoked within each Runge-Kutta stage for the split-explicit acoustic
+ * sub-stepping loop.
+ *
+ * @param ru_p         Perturbation horizontal momentum flux, read-write.
+ * @param rw_p         Perturbation vertical momentum flux, read-write.
+ * @param rtheta_pp    Double-perturbation rho*theta, read-write.
+ * @param rho_pp       Double-perturbation density, read-write.
+ * @param nVertLevels  Number of vertical levels.
+ * @param nCells       Number of cells.
+ * @param nEdges       Number of edges.
+ * @param substep      Current acoustic sub-step index (0-based).
+ * @param dts          Acoustic sub-step timestep (seconds).
+ */
+typedef void (*mpas_advance_acoustic_step_cb_t)(
+    double* ru_p, double* rw_p, double* rtheta_pp, double* rho_pp,
+    int nVertLevels, int nCells, int nEdges, int substep, double dts);
+
+/**
+ * @brief Callback for monotonic scalar transport.
+ *
+ * Invoked to advance scalar tracers using flux-corrected transport with
+ * monotonicity enforcement.
+ *
+ * @param scalars      Scalar tracer array (nScalars x nVertLevels x nCells), read-write.
+ * @param ruAvg        Time-averaged horizontal mass flux (nVertLevels x nEdges), read.
+ * @param wwAvg        Time-averaged vertical mass flux ((nVertLevels+1) x nCells), read.
+ * @param nScalars     Number of scalar species.
+ * @param nVertLevels  Number of vertical levels.
+ * @param nCells       Number of cells.
+ * @param nEdges       Number of edges.
+ * @param dt           Full dynamics timestep (seconds).
+ */
+typedef void (*mpas_advance_scalars_mono_cb_t)(
+    double* scalars, double* ruAvg, double* wwAvg,
+    int nScalars, int nVertLevels, int nCells, int nEdges, double dt);
+
+/**
+ * @brief Callback for halo exchange of a single field.
+ *
+ * Invoked at synchronization points where ghost-cell data must be updated
+ * across MPI partitions. The field pointer includes the full halo region
+ * (owned + halo cells/edges) so that the Fortran side can fill halo values
+ * in place.
+ *
+ * @param field        Pointer to the field data (full extent including halo), read-write.
+ * @param field_id     Integer identifier for the field (used by Fortran to select the exchange).
+ * @param nVertLevels  Number of vertical levels (or vertical extent of the field).
+ * @param nElements    Number of elements in the horizontal dimension (cells or edges, including halo).
+ */
+typedef void (*mpas_halo_exchange_cb_t)(
+    double* field, int field_id, int nVertLevels, int nElements);
+
+/**
+ * @brief Register Fortran callback functions for hybrid execution mode.
+ *
+ * Must be called after a successful mpas_dycore_cpp_init() and before the
+ * first mpas_dycore_cpp_timestep(). Stores callback function pointers in
+ * the internal DycoreState and marks each kernel as "Fortran-delegated"
+ * when a non-NULL pointer is provided.
+ *
+ * Individual callbacks may be set to NULL to indicate that the C++
+ * implementation should be used for that kernel. This allows incremental
+ * migration — initially all kernels delegate to Fortran, then one by one
+ * the C++ implementations replace them.
+ *
+ * The internal DycoreState maintains per-kernel flags (use_cpp vs.
+ * use_callback) that control dispatch during timestep execution.
+ *
+ * @param compute_dyn_tend_cb       Callback for tendency computation, or NULL for C++.
+ * @param advance_acoustic_step_cb  Callback for acoustic sub-stepping, or NULL for C++.
+ * @param advance_scalars_mono_cb   Callback for scalar transport, or NULL for C++.
+ * @param halo_exchange_cb          Callback for halo exchange, or NULL for C++.
+ * @return 0 on success, 1 if dycore is not initialized.
+ *
+ * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6
+ */
+int mpas_dycore_cpp_set_callbacks(
+    mpas_compute_dyn_tend_cb_t compute_dyn_tend_cb,
+    mpas_advance_acoustic_step_cb_t advance_acoustic_step_cb,
+    mpas_advance_scalars_mono_cb_t advance_scalars_mono_cb,
+    mpas_halo_exchange_cb_t halo_exchange_cb
+);
+
 #ifdef __cplusplus
 }
 #endif

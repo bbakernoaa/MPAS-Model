@@ -14,6 +14,10 @@
 /// is passed by reference through the timestep() method.
 
 #include <mpas_dycore/types.hpp>
+#include <mpas_dycore/workspace.hpp>
+#include <mpas_dycore/geometry.hpp>
+#include <mpas_dycore/mesh.hpp>
+#include <mpas_dycore/halo.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -90,6 +94,15 @@ struct SRK3Config {
 
     /// Enable/disable scalar advection within the timestep.
     bool config_scalar_advection = true;
+
+    /// Number of scalar tracer species.
+    index_type nScalars = 0;
+
+    /// First moisture species index (0-based) in the scalars array.
+    index_type moist_start = 0;
+
+    /// Last moisture species index (inclusive, 0-based). When moist_end < moist_start, no moisture.
+    index_type moist_end = -1;
 
     // ---- Incremental Analysis Update (IAU) ----
 
@@ -177,11 +190,49 @@ public:
         validate_srk3_config(config_);
     }
 
-    /// @brief Execute one full large timestep.
+    /// @brief Execute one full large timestep (parameterized version).
     ///
-    /// This is the top-level entry point called by mpas_dycore_cpp_timestep().
-    /// All field references will be added in task 19.2 when the full method
-    /// signature is defined.
+    /// This is the primary entry point called by mpas_dycore_cpp_timestep().
+    /// Accepts all field views, workspace, geometry, connectivity, and halo
+    /// exchange objects needed for the full SRK3 integration loop.
+    ///
+    /// @param u         Prognostic horizontal velocity field (nVertLevels, nEdges).
+    /// @param theta_m   Prognostic moist potential temperature (nVertLevels, nCells).
+    /// @param rho_zz    Prognostic dry density (nVertLevels, nCells).
+    /// @param w         Prognostic vertical velocity (nVertLevels+1, nCells).
+    /// @param scalars   Scalar tracer fields (nScalars, nVertLevels, nCells).
+    /// @param workspace Pre-allocated SRK3 workspace arrays.
+    /// @param geometry  Mesh geometry data (metrics, base-state, stencils).
+    /// @param mesh      Mesh connectivity tables.
+    /// @param halo      Halo exchange manager.
+    /// @param halo_desc CSR halo descriptor for communication patterns.
+    /// @param comm      MPI communicator.
+    /// @param nCells    Number of cells in local partition.
+    /// @param nEdges    Number of edges in local partition.
+    /// @param nVertices Number of vertices in local partition.
+    /// @param nVertLevels Number of vertical levels.
+    void timestep(
+        Field2D<> u,
+        Field2D<> theta_m,
+        Field2D<> rho_zz,
+        Field2D<> w,
+        Field3D<> scalars,
+        SRK3Workspace& workspace,
+        const MeshGeometry& geometry,
+        const MeshConnectivity& mesh,
+        HaloExchange& halo,
+        const CSRHaloDescriptor& halo_desc,
+        MPI_Comm comm,
+        index_type nCells,
+        index_type nEdges,
+        index_type nVertices,
+        index_type nVertLevels);
+
+    /// @brief Execute one full large timestep (legacy no-arg version).
+    ///
+    /// Retained for backward compatibility. Contains the documented algorithm
+    /// structure with commented-out kernel calls. Will be deprecated once the
+    /// parameterized version is fully wired.
     void timestep();
 
     /// @brief Get the current configuration (read-only).
@@ -197,13 +248,75 @@ private:
     /// Computes tendencies, performs acoustic sub-stepping, and recovers
     /// large-step variables for the given RK stage.
     ///
-    /// @param rk_step The RK stage index (0-based: 0, 1, or 2).
-    void advance_dynamics(int rk_step);
+    /// @param rk_step     The RK stage index (1-based: 1, 2, or 3).
+    /// @param dt_rk       RK stage timestep fraction.
+    /// @param dts_rk      Acoustic sub-timestep for this stage.
+    /// @param n_acoustic  Number of acoustic sub-steps for this stage.
+    /// @param u           Prognostic horizontal velocity (nVertLevels, nEdges).
+    /// @param theta_m     Prognostic potential temperature (nVertLevels, nCells).
+    /// @param rho_zz      Prognostic dry density (nVertLevels, nCells).
+    /// @param w           Prognostic vertical velocity (nVertLevels+1, nCells).
+    /// @param workspace   Pre-allocated workspace arrays.
+    /// @param geometry    Mesh geometry data.
+    /// @param mesh        Mesh connectivity tables.
+    /// @param halo        Halo exchange manager.
+    /// @param halo_desc   CSR halo descriptor.
+    /// @param comm        MPI communicator.
+    /// @param nCells      Number of cells.
+    /// @param nEdges      Number of edges.
+    /// @param nVertices   Number of vertices.
+    /// @param nVertLevels Number of vertical levels.
+    void advance_dynamics(
+        int rk_step,
+        real_type dt_rk,
+        real_type dts_rk,
+        int n_acoustic,
+        Field2D<> u,
+        Field2D<> theta_m,
+        Field2D<> rho_zz,
+        Field2D<> w,
+        SRK3Workspace& workspace,
+        const MeshGeometry& geometry,
+        const MeshConnectivity& mesh,
+        HaloExchange& halo,
+        const CSRHaloDescriptor& halo_desc,
+        MPI_Comm comm,
+        index_type nCells,
+        index_type nEdges,
+        index_type nVertices,
+        index_type nVertLevels);
 
     /// @brief Execute the transport phase (scalar advection).
     ///
     /// Performs horizontal and vertical scalar advection with FCT limiting,
     /// using time-averaged mass fluxes accumulated during acoustic sub-stepping.
+    ///
+    /// @param scalars     Scalar tracer fields (nScalars, nVertLevels, nCells).
+    /// @param workspace   Pre-allocated workspace arrays (contains ruAvg, wwAvg).
+    /// @param geometry    Mesh geometry data.
+    /// @param mesh        Mesh connectivity tables.
+    /// @param halo        Halo exchange manager.
+    /// @param halo_desc   CSR halo descriptor.
+    /// @param comm        MPI communicator.
+    /// @param nCells      Number of cells.
+    /// @param nEdges      Number of edges.
+    /// @param nVertLevels Number of vertical levels.
+    void advance_transport(
+        Field3D<> scalars,
+        SRK3Workspace& workspace,
+        const MeshGeometry& geometry,
+        const MeshConnectivity& mesh,
+        HaloExchange& halo,
+        const CSRHaloDescriptor& halo_desc,
+        MPI_Comm comm,
+        index_type nCells,
+        index_type nEdges,
+        index_type nVertLevels);
+
+    /// @brief Legacy no-arg dynamics advance (backward compat).
+    void advance_dynamics(int rk_step);
+
+    /// @brief Legacy no-arg transport advance (backward compat).
     void advance_transport();
 };
 

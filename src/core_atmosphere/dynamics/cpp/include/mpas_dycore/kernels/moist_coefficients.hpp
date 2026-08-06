@@ -12,12 +12,19 @@
 /// sub-cycle, before the first RK stage.
 ///
 /// @section algorithm Algorithm
-/// For each cell and level, a cell-centered moist coefficient is computed as:
-///   cq_cell(k, iCell) = 1 / (1 + sum_{s=moist_start}^{moist_end} scalars(s, k, iCell))
+/// For each cell and level, the total moisture mixing ratio is:
+///   qtot(k, iCell) = sum_{s=moist_start}^{moist_end} scalars(s, k, iCell)
 ///
-/// The interface values cqw are computed as vertical averages of adjacent levels.
-/// The edge values cqu are computed as horizontal averages of the two cells
-/// sharing each edge.
+/// The interface values cqw average moisture VERTICALLY first, then take
+/// the reciprocal:
+///   cqw(k, iCell) = 1 / (1 + 0.5*(qtot(k-1, iCell) + qtot(k, iCell)))
+///
+/// The edge values cqu average moisture HORIZONTALLY across adjacent cells,
+/// then take the reciprocal:
+///   cqu(k, iEdge) = 1 / (1 + 0.5*(qtot(k, cell0) + qtot(k, cell1)))
+///
+/// NOTE: It is essential to average the moisture BEFORE taking the reciprocal.
+/// Averaging the reciprocals would give a different (incorrect) result.
 ///
 /// @reference Skamarock, W. C., et al. (2012), "A Multiscale Nonhydrostatic
 /// Atmospheric Model Using Centroidal Voronoi Tesselations and C-Grid Staggering",
@@ -33,13 +40,13 @@ namespace mpas::dycore::kernels {
 ///
 /// Governing relation:
 /// @f[
-///   c_q = \frac{1}{1 + \sum_{s=\text{moist\_start}}^{\text{moist\_end}} q_s}
+///   c_q = \frac{1}{1 + \bar{q}_{\text{tot}}}
 /// @f]
-/// where @f$ q_s @f$ are moisture mixing ratios from moist_start to moist_end
-/// inclusive.
+/// where @f$ \bar{q}_{\text{tot}} @f$ is the spatially averaged total moisture
+/// mixing ratio (vertical average for cqw, horizontal average for cqu).
 ///
-/// For cqw at cell interfaces: average of adjacent level values.
-/// For cqu at edges: average of the two cells sharing the edge.
+/// For cqw at cell interfaces: average moisture vertically, then take reciprocal.
+/// For cqu at edges: average moisture horizontally, then take reciprocal.
 ///
 /// When moist_end < moist_start (no moisture species), sets cqu=1.0
 /// and cqw=1.0 everywhere.

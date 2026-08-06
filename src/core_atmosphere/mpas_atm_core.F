@@ -31,7 +31,8 @@ module atm_core
       use mpas_atm_diagnostics_manager, only : mpas_atm_diag_setup
       use mpas_atm_threading, only : mpas_atm_threading_init
       use atm_time_integration, only : mpas_atm_dynamics_init, &
-                              mpas_atm_pre_dynamics, mpas_atm_post_dynamics
+                              mpas_atm_pre_dynamics, mpas_atm_post_dynamics, &
+                              mpas_cpp_callbacks_set_halo_exch
       use mpas_timer, only : mpas_timer_start, mpas_timer_stop
       use mpas_attlist, only : mpas_modify_att
       use mpas_string_utils, only : mpas_string_replace
@@ -203,11 +204,11 @@ module atm_core
 
       !
       ! Read all other inputs
-      ! For now we don't do this here to match results with previous code; to match requires 
+      ! For now we don't do this here to match results with previous code; to match requires
       ! that we read in SST and seaice fields after the call to atm_mpas_init_block()
       !
 !      call MPAS_stream_mgr_read(domain % streamManager, ierr=ierr)
-!      call MPAS_stream_mgr_reset_alarms(domain % streamManager, direction=MPAS_STREAM_INPUT, ierr=ierr) 
+!      call MPAS_stream_mgr_reset_alarms(domain % streamManager, direction=MPAS_STREAM_INPUT, ierr=ierr)
 
       if (.not. config_do_restart) then
          block => domain % blocklist
@@ -236,7 +237,7 @@ module atm_core
       ! Set startTimeStamp based on the start time of the simulation clock
       !
       startTime = mpas_get_clock_time(clock, MPAS_START_TIME, ierr)
-      call mpas_get_time(startTime, dateTimeString=startTimeStamp) 
+      call mpas_get_time(startTime, dateTimeString=startTimeStamp)
 
       call exchange_halo_group(domain, 'initialization:u')
 
@@ -285,6 +286,7 @@ module atm_core
       ! Prepare the dynamics for integration
       !
       call mpas_atm_dynamics_init(domain)
+      call mpas_cpp_callbacks_set_halo_exch(exchange_halo_group)
 
       !
       ! Initialize the chemistry package
@@ -364,7 +366,7 @@ module atm_core
 
 
    subroutine atm_mpas_init_block(dminfo, stream_manager, block, mesh, dt)
-   
+
       use atm_time_integration
       use mpas_rbf_interpolation
       use mpas_vector_reconstruction
@@ -378,7 +380,7 @@ module atm_core
 #endif
 
       implicit none
-   
+
       type (dm_info), intent(in) :: dminfo
       type (MPAS_streamManager_type), intent(inout) :: stream_manager
       type (block_type), intent(inout) :: block
@@ -397,7 +399,7 @@ module atm_core
       type (mpas_pool_type), pointer :: output_noahmp
 
       integer :: iCell,iEdge,iVertex,k
-      
+
       real (kind=RKIND), dimension(:,:), pointer :: u, uReconstructX, uReconstructY, uReconstructZ, uReconstructZonal, uReconstructMeridional
       real (kind=RKIND), dimension(:), pointer :: meshScalingDel2, meshScalingDel4
       real (kind=RKIND), dimension(:), pointer :: areaCell, invAreaCell
@@ -425,7 +427,7 @@ module atm_core
 
 
       call atm_compute_signs(mesh)
-   
+
       call mpas_pool_get_subpool(block % structs, 'diag', diag)
       call mpas_pool_get_subpool(block % structs, 'state', state)
 
@@ -436,42 +438,42 @@ module atm_core
 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       !!!! Compute inverses to avoid divides later
-      
+
       call mpas_pool_get_array(mesh, 'areaCell', areaCell)
       call mpas_pool_get_array(mesh, 'invAreaCell', invAreaCell)
-      
+
       call mpas_pool_get_array(mesh, 'dvEdge', dvEdge)
-      call mpas_pool_get_array(mesh, 'dcEdge', dcEdge)      
+      call mpas_pool_get_array(mesh, 'dcEdge', dcEdge)
       call mpas_pool_get_array(mesh, 'invDvEdge', invDvEdge)
-      call mpas_pool_get_array(mesh, 'invDcEdge', invDcEdge)      
-      
+      call mpas_pool_get_array(mesh, 'invDcEdge', invDcEdge)
+
       call mpas_pool_get_array(mesh, 'areaTriangle', areaTriangle)
       call mpas_pool_get_array(mesh, 'invAreaTriangle', invAreaTriangle)
-      
-      call mpas_pool_get_dimension(mesh, 'nCells', nCells_ptr)      
+
+      call mpas_pool_get_dimension(mesh, 'nCells', nCells_ptr)
       call mpas_pool_get_dimension(mesh, 'nEdges', nEdges_ptr)
       call mpas_pool_get_dimension(mesh, 'nVertices', nVertices_ptr)
 
       nCells = nCells_ptr
       nEdges = nEdges_ptr
       nVertices = nVertices_ptr
- 
-      do iCell=1,nCells 
+
+      do iCell=1,nCells
          invAreaCell(iCell) = 1.0_RKIND / areaCell(iCell)
       end do
-        
-      do iEdge=1,nEdges 
+
+      do iEdge=1,nEdges
          invDvEdge(iEdge) = 1.0_RKIND / dvEdge(iEdge)
       end do
-      
-      do iEdge=1,nEdges 
+
+      do iEdge=1,nEdges
          invDcEdge(iEdge) = 1.0_RKIND / dcEdge(iEdge)
       end do
-      
+
       do iVertex=1,nVertices
          invAreaTriangle(iVertex) = 1.0_RKIND / areaTriangle(iVertex)
       end do
-      
+
       !!!!! End compute inverses
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -482,7 +484,7 @@ module atm_core
       call atm_adv_coef_compression(mesh)
 
       call atm_couple_coef_3rd_order(mesh, block % configs)
-      
+
       call mpas_pool_get_dimension(state, 'nVertices', nVertices_ptr)
       call mpas_pool_get_dimension(state, 'nVertLevels', nVertLevels_ptr)
 
@@ -561,7 +563,7 @@ module atm_core
                            )
       call mpas_reconstruct_2d_d2h(mesh, u, uReconstructX, uReconstructY, uReconstructZ, &
                uReconstructZonal, uReconstructMeridional)
-   
+
 #ifdef DO_PHYSICS
       !proceed with initialization of physics parameterization if moist_physics is set to true:
       call mpas_pool_get_subpool(block % structs, 'sfc_input', sfc_input)
@@ -595,7 +597,7 @@ module atm_core
                            diag_physics, diag_physics_noahmp, ngw_input, atm_input, sfc_input, output_noahmp)
       endif
 #endif
-   
+
       call atm_compute_mesh_scaling(mesh, block % configs)
 
       call atm_compute_damping_coefs(mesh, block % configs)
@@ -615,10 +617,10 @@ module atm_core
                           realArgs=(/minval(meshScalingDel4(1:nEdgesSolve)), maxval(meshScalingDel4(1:nEdgesSolve))/))
 
    end subroutine atm_mpas_init_block
-   
-   
+
+
    function atm_core_run(domain) result(ierr)
-   
+
       use mpas_timekeeping
       use mpas_kind_types
       use mpas_stream_manager
@@ -626,12 +628,12 @@ module atm_core
       use mpas_timer, only : mpas_timer_start, mpas_timer_stop
       use mpas_atm_boundaries, only : mpas_atm_update_bdy_tend
       use mpas_atm_diagnostics_manager, only : mpas_atm_diag_update, mpas_atm_diag_compute, mpas_atm_diag_reset
-   
+
       implicit none
-   
+
       type (domain_type), intent(inout) :: domain
       integer :: ierr
-   
+
       real (kind=RKIND) :: dt
       logical, pointer :: config_do_restart
       logical, pointer :: config_apply_lbcs
@@ -653,12 +655,12 @@ module atm_core
       real (kind=R8KIND) :: diag_start_time, diag_stop_time
       real (kind=R8KIND) :: input_start_time, input_stop_time
       real (kind=R8KIND) :: output_start_time, output_stop_time
-      
+
       ierr = 0
 
       clock => domain % clock
       mpas_log_info => domain % logInfo
-      
+
       call mpas_get_timeInterval(mpas_get_clock_timestep(clock, ierr), dt=dt)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_do_restart', config_do_restart)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_restart_timestamp_name', config_restart_timestamp_name)
@@ -754,7 +756,7 @@ module atm_core
       do while (.not. mpas_is_clock_stop_time(clock))
 
          currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
-         call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)         
+         call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
 
          call mpas_log_write('')
          call mpas_log_write('Begin timestep '//trim(timeStamp))
@@ -815,13 +817,13 @@ module atm_core
          call mpas_dmpar_get_time(integ_start_time)
          call atm_do_timestep(domain, dt, itimestep)
          call mpas_dmpar_get_time(integ_stop_time)
-         call mpas_timer_stop("time integration")   
+         call mpas_timer_stop("time integration")
          call mpas_log_write(' Timing for integration step: $r s', realArgs=(/real(integ_stop_time - integ_start_time, kind=RKIND)/))
 
          ! Move time level 2 fields back into time level 1 for next time step
          call mpas_pool_get_subpool(domain % blocklist % structs, 'state', state)
          call mpas_pool_shift_time_levels(state)
-         
+
          ! Advance clock before writing output
          itimestep = itimestep + 1
          call mpas_advance_clock(clock)
@@ -909,10 +911,10 @@ module atm_core
          call mpas_stream_mgr_reset_alarms(domain % streamManager, direction=MPAS_STREAM_OUTPUT, ierr=ierr)
 
       end do
-   
+
    end function atm_core_run
 
-   
+
    subroutine atm_compute_output_diagnostics(state, time_lev, diag, mesh)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Compute diagnostic fields for a domain to be written to history files
@@ -922,16 +924,16 @@ module atm_core
    !
    ! Output: state - upon returning, diagnostic fields will have be computed
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   
+
       use mpas_constants
-   
+
       implicit none
-   
+
       type (mpas_pool_type), intent(inout) :: state
       integer, intent(in) :: time_lev            ! which time level to use from state
       type (mpas_pool_type), intent(inout) :: diag
       type (mpas_pool_type), intent(in) :: mesh
-   
+
       integer :: iCell, k
       integer, pointer :: nCells, nVertLevels, index_qv
       real (kind=RKIND), dimension(:,:), pointer :: theta, rho, theta_m, rho_zz, zz
@@ -963,8 +965,8 @@ module atm_core
       end do
 
    end subroutine atm_compute_output_diagnostics
-   
-   
+
+
    subroutine atm_reset_diagnostics(diag_physics)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! reset some diagnostics after output
@@ -973,11 +975,11 @@ module atm_core
    !
    ! Output: whatever diagnostics need resetting after output
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   
+
       implicit none
-   
+
       type (mpas_pool_type), pointer :: diag_physics
-   
+
       real (kind=RKIND), dimension(:), pointer :: refl10cm_1km_max
 
 #ifdef DO_PHYSICS
@@ -986,12 +988,12 @@ module atm_core
          refl10cm_1km_max(:) = 0.
       endif
 #endif
-   
+
    end subroutine atm_reset_diagnostics
 
 
    subroutine atm_do_timestep(domain, dt, itimestep)
-   
+
       use mpas_timekeeping
       use mpas_kind_types
       use atm_time_integration
@@ -1007,11 +1009,11 @@ module atm_core
       use mpas_atm_halos, only: exchange_halo_group
 
       implicit none
-   
-      type (domain_type), intent(inout) :: domain 
+
+      type (domain_type), intent(inout) :: domain
       real (kind=RKIND), intent(in) :: dt
       integer, intent(in) :: itimestep
-      
+
       type (MPAS_Time_Type) :: startTime, currTime
       type (MPAS_TimeInterval_Type) :: xtimeTime
       integer :: s, s_n, s_d
@@ -1023,9 +1025,9 @@ module atm_core
 
       startTime = mpas_get_clock_time(clock, MPAS_START_TIME, ierr)
       currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
-         
+
       xtimeTime = currTime - startTime
-      call mpas_get_timeInterval(interval=xtimeTime, S=s, S_n=s_n, S_d=s_d, ierr=ierr)         
+      call mpas_get_timeInterval(interval=xtimeTime, S=s, S_n=s_n, S_d=s_d, ierr=ierr)
       xtime_s = (s + s_n / s_d)
 
 
@@ -1044,17 +1046,17 @@ module atm_core
       call atm_timestep(domain, dt, currTime, itimestep, exchange_halo_group)
 
    end subroutine atm_do_timestep
-   
-   
+
+
    function atm_core_finalize(domain) result(ierr)
-   
+
       use mpas_decomp
       use mpas_timekeeping
       use mpas_atm_diagnostics_manager, only : mpas_atm_diag_cleanup
       use mpas_atm_threading, only : mpas_atm_threading_finalize
       use atm_time_integration, only : mpas_atm_dynamics_finalize
       use mpas_atm_halos, only: atm_destroy_halo_groups
-   
+
 #ifdef DO_PHYSICS
       use mpas_atmphys_finalize
 #endif
@@ -1064,9 +1066,9 @@ module atm_core
 #endif
 
       implicit none
-   
+
       type (domain_type), intent(inout) :: domain
-      type (block_type), pointer :: block_ptr 
+      type (block_type), pointer :: block_ptr
       integer :: ierr
 
       ierr = 0
@@ -1117,7 +1119,7 @@ module atm_core
       call mpas_log_write('********************************************************')
       call mpas_log_write('   Finished running the atmosphere core')
       call mpas_log_write('********************************************************')
-   
+
    end function atm_core_finalize
 
 
@@ -1286,7 +1288,7 @@ module atm_core
 
       real (kind=RKIND), dimension(:), pointer :: rdzw, etp, etm, ewp, ewm
       real (kind=RKIND), pointer  :: max_coeff, min_coeff, transition_lower_bound, transition_upper_bound
-      real (kind=RKIND)  ::  transition_width 
+      real (kind=RKIND)  ::  transition_width
       real (kind=RKIND), allocatable, dimension(:) :: height_u_levels, epssm_coeff_u, height_w_levels, epssm_coeff_w
 
       m1 = -1.0
@@ -1329,16 +1331,16 @@ module atm_core
 
       transition_width = transition_upper_bound - transition_lower_bound
 
-! initialization for heights of coordinate at u and w levels  
+! initialization for heights of coordinate at u and w levels
 ! These are the heights of the computational coordinate zeta
-      
+
       height_w_levels(:) = 0.0_RKIND
       do k =1, nVertLevels
         height_w_levels(k+1) = height_w_levels(k) + 1.0_RKIND/rdzw(k)
-        height_u_levels(k) = 0.5*(height_w_levels(k+1) + height_w_levels(k)) 
+        height_u_levels(k) = 0.5*(height_w_levels(k+1) + height_w_levels(k))
       enddo
- 
-! Height dependent values of epssm; profiles stored in etp, etm, ewp, and ewm, 
+
+! Height dependent values of epssm; profiles stored in etp, etm, ewp, and ewm,
 
 #ifdef MPAS_DEBUG
       call mpas_log_write(' setting epssm coefficients ')
@@ -1354,11 +1356,11 @@ module atm_core
             epssm_coeff_u(k) = min_coeff
          else if(height_u_levels(k).ge.transition_upper_bound)  then
             epssm_coeff_u(k) = max_coeff
-         else   
+         else
             z = (height_u_levels(k)-transition_lower_bound)/transition_width
             epssm_coeff_u(k) = min_coeff + sin(0.5_RKIND*pii*z)**2*(max_coeff-min_coeff)
-         end if 
-         etp(k) = 0.5*(1.0 + epssm_coeff_u(k)) 
+         end if
+         etp(k) = 0.5*(1.0 + epssm_coeff_u(k))
          etm(k) = 0.5*(1.0 - epssm_coeff_u(k))
 #ifdef MPAS_DEBUG
          call mpas_log_write('k, etp, etm $i $r $r ',intArgs=(/k/),realArgs=(/etp(k),etm(k)/))
@@ -1369,12 +1371,12 @@ module atm_core
             epssm_coeff_w(k) = min_coeff
          else if(height_w_levels(k).ge.transition_upper_bound)  then
             epssm_coeff_w(k) = max_coeff
-         else   
+         else
             z = (height_w_levels(k)-transition_lower_bound)/transition_width
             epssm_coeff_w(k) = min_coeff + sin(0.5_RKIND*pii*z)**2*(max_coeff-min_coeff)
-         end if 
-         ewp(k) = 0.5*(1.0 + epssm_coeff_w(k)) 
-         ewm(k) = 0.5*(1.0 - epssm_coeff_w(k)) 
+         end if
+         ewp(k) = 0.5*(1.0 + epssm_coeff_w(k))
+         ewm(k) = 0.5*(1.0 - epssm_coeff_w(k))
 #ifdef MPAS_DEBUG
          call mpas_log_write('k, ewp, ewm $i $r $r ',intArgs=(/k/),realArgs=(/ewp(k),ewm(k)/))
 #endif
@@ -1429,11 +1431,11 @@ module atm_core
          ! do only if this edge flux is needed to update owned cells
          !
          if (cell1 <= nCells .or. cell2 <= nCells) then
- 
+
             cell_list(1) = cell1
             cell_list(2) = cell2
-            n = 2 
-  
+            n = 2
+
           !  add cells surrounding cell 1.  n is number of cells currently in list
             do i = 1, nEdgesOnCell(cell1)
                if (cellsOnCell(i,cell1) /= cell2) then
@@ -1441,7 +1443,7 @@ module atm_core
                   cell_list(n) = cellsOnCell(i,cell1)
                end if
             end do
-  
+
           !  add cells surrounding cell 2 (brute force approach)
             do iCell = 1, nEdgesOnCell(cell2)
                addcell = .true.
@@ -1453,28 +1455,28 @@ module atm_core
                   cell_list(n) = cellsOnCell(iCell,cell2)
                end if
             end do
-  
-  
+
+
             nAdvCellsForEdge(iEdge) = n
             do iCell = 1, nAdvCellsForEdge(iEdge)
                advCellsForEdge(iCell,iEdge) = cell_list(iCell)
             end do
-  
+
           ! we have the ordered list, now construct coefficients
-  
+
             adv_coefs(:,iEdge) = 0.
             adv_coefs_3rd(:,iEdge) = 0.
-          
+
           ! pull together third and fourth order contributions to the flux
           ! first from cell1
-  
+
             j_in = 0
             do j=1, n
                if( cell_list(j) == cell1 ) j_in = j
             end do
             adv_coefs    (j_in,iEdge) = adv_coefs    (j_in,iEdge) + deriv_two(1,1,iEdge)
             adv_coefs_3rd(j_in,iEdge) = adv_coefs_3rd(j_in,iEdge) + deriv_two(1,1,iEdge)
-  
+
             do iCell = 1, nEdgesOnCell(cell1)
                j_in = 0
                do j=1, n
@@ -1483,17 +1485,17 @@ module atm_core
                adv_coefs    (j_in,iEdge) = adv_coefs    (j_in,iEdge) + deriv_two(iCell+1,1,iEdge)
                adv_coefs_3rd(j_in,iEdge) = adv_coefs_3rd(j_in,iEdge) + deriv_two(iCell+1,1,iEdge)
             end do
-  
+
           ! pull together third and fourth order contributions to the flux
           ! now from cell2
-  
+
             j_in = 0
             do j=1, n
                if( cell_list(j) == cell2 ) j_in = j
             end do
             adv_coefs    (j_in,iEdge) = adv_coefs    (j_in,iEdge) + deriv_two(1,2,iEdge)
             adv_coefs_3rd(j_in,iEdge) = adv_coefs_3rd(j_in,iEdge) - deriv_two(1,2,iEdge)
-  
+
             do iCell = 1, nEdgesOnCell(cell2)
                j_in = 0
                do j=1, n
@@ -1502,35 +1504,35 @@ module atm_core
                adv_coefs    (j_in,iEdge) = adv_coefs    (j_in,iEdge) + deriv_two(iCell+1,2,iEdge)
                adv_coefs_3rd(j_in,iEdge) = adv_coefs_3rd(j_in,iEdge) - deriv_two(iCell+1,2,iEdge)
             end do
-  
+
             do j = 1,n
                adv_coefs    (j,iEdge) = - (dcEdge(iEdge) **2) * adv_coefs    (j,iEdge) / 12.
                adv_coefs_3rd(j,iEdge) = - (dcEdge(iEdge) **2) * adv_coefs_3rd(j,iEdge) / 12.
             end do
-  
+
           ! 2nd order centered contribution - place this in the main flux weights
-  
+
             j_in = 0
             do j=1, n
                if( cell_list(j) == cell1 ) j_in = j
             end do
             adv_coefs(j_in,iEdge) = adv_coefs(j_in,iEdge) + 0.5
-  
+
             j_in = 0
             do j=1, n
                if( cell_list(j) == cell2 ) j_in = j
             end do
             adv_coefs(j_in,iEdge) = adv_coefs(j_in,iEdge) + 0.5
-  
+
           !  multiply by edge length - thus the flux is just dt*ru times the results of the vector-vector multiply
-  
+
             do j=1,n
                adv_coefs    (j,iEdge) = dvEdge(iEdge) * adv_coefs    (j,iEdge)
                adv_coefs_3rd(j,iEdge) = dvEdge(iEdge) * adv_coefs_3rd(j,iEdge)
             end do
- 
+
          end if  ! only do for edges of owned-cells
-         
+
       end do ! end loop over edges
 
    end subroutine atm_adv_coef_compression

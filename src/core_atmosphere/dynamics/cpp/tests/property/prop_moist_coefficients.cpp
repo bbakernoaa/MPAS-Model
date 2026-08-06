@@ -9,7 +9,9 @@
 ///
 /// Property 32: Moist Coefficient Formula Verification
 ///   For known scalar values, the computed cqw and cqu match the expected
-///   formulae: cq_cell = 1/(1+sum(q_s)), cqw = vertical average, cqu = horizontal average.
+///   formulae: qtot = sum(q_s), then cqw = 1/(1 + vertically-averaged qtot),
+///   cqu = 1/(1 + horizontally-averaged qtot). The reciprocal is taken AFTER
+///   averaging moisture, not before.
 
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
@@ -113,10 +115,11 @@ RC_GTEST_PROP(MoistCoefficientsNoMoisture, AllValuesAreOneWhenNoMoistureSpecies,
 // Property 32: Moist Coefficient Formula Verification
 // ============================================================================
 // For known scalar values, verify computed coefficients match the expected
-// formula: cq_cell = 1/(1 + sum(q_s for s in [moist_start, moist_end]))
-// cqw at interior interfaces = 0.5*(cq_cell[k-1] + cq_cell[k])
-// cqw at top boundary = cq_cell[0], cqw at bottom = cq_cell[nVertLevels-1]
-// cqu at interior edges = 0.5*(cq_cell of cell0 + cq_cell of cell1)
+// formula: qtot(k, iCell) = sum(q_s for s in [moist_start, moist_end])
+// cqw at interior interfaces = 1/(1 + 0.5*(qtot[k-1] + qtot[k]))
+// cqw at top boundary = 1/(1 + qtot[0]), cqw at bottom = 1/(1 + qtot[nVertLevels-1])
+// cqu at interior edges = 1/(1 + 0.5*(qtot[k,cell0] + qtot[k,cell1]))
+// NOTE: Moisture is averaged BEFORE taking the reciprocal.
 
 RC_GTEST_PROP(MoistCoefficientFormula, ComputedCoefficientsMatchExpectedFormula,
               ()) {
@@ -171,8 +174,8 @@ RC_GTEST_PROP(MoistCoefficientFormula, ComputedCoefficientsMatchExpectedFormula,
         nCells, nEdges,
         static_cast<index_type>(nVertLevels));
 
-    // Compute expected cq_cell values manually
-    std::vector<real_type> cq_cell(
+    // Compute expected qtot values manually (total moisture per cell/level)
+    std::vector<real_type> qtot_expected(
         static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells));
 
     for (index_type iCell = 0; iCell < nCells; ++iCell) {
@@ -181,43 +184,45 @@ RC_GTEST_PROP(MoistCoefficientFormula, ComputedCoefficientsMatchExpectedFormula,
             for (index_type s = moist_start; s <= moist_end; ++s) {
                 sum += scalars[s, k, iCell];
             }
-            real_type expected = 1.0 / (1.0 + sum);
-            cq_cell[static_cast<std::size_t>(k) * static_cast<std::size_t>(nCells)
-                    + static_cast<std::size_t>(iCell)] = expected;
+            qtot_expected[static_cast<std::size_t>(k) * static_cast<std::size_t>(nCells)
+                          + static_cast<std::size_t>(iCell)] = sum;
         }
     }
 
-    // Helper to access cq_cell
-    auto getCqCell = [&](index_type k, index_type iCell) -> real_type {
-        return cq_cell[static_cast<std::size_t>(k) * static_cast<std::size_t>(nCells)
-                       + static_cast<std::size_t>(iCell)];
+    // Helper to access qtot
+    auto getQtot = [&](index_type k, index_type iCell) -> real_type {
+        return qtot_expected[static_cast<std::size_t>(k) * static_cast<std::size_t>(nCells)
+                             + static_cast<std::size_t>(iCell)];
     };
 
     const real_type tol = 1.0e-14;
 
-    // Verify cqw at interfaces
+    // Verify cqw at interfaces: reciprocal of vertically-averaged moisture
     for (index_type iCell = 0; iCell < nCells; ++iCell) {
-        // Top boundary: cqw[0, iCell] == cq_cell[0, iCell]
+        // Top boundary: cqw[0, iCell] == 1/(1 + qtot[0, iCell])
         {
+            real_type expected_cqw = 1.0 / (1.0 + getQtot(0, iCell));
             auto val = cqw[0, iCell];
-            RC_ASSERT(std::abs(val - getCqCell(0, iCell)) < tol);
+            RC_ASSERT(std::abs(val - expected_cqw) < tol);
         }
 
-        // Interior interfaces: cqw[k, iCell] == 0.5*(cq_cell[k-1] + cq_cell[k])
+        // Interior interfaces: cqw[k, iCell] == 1/(1 + 0.5*(qtot[k-1] + qtot[k]))
         for (index_type k = 1; k < static_cast<index_type>(nVertLevels); ++k) {
-            real_type expected_cqw = 0.5 * (getCqCell(k - 1, iCell) + getCqCell(k, iCell));
+            real_type qtotal = 0.5 * (getQtot(k - 1, iCell) + getQtot(k, iCell));
+            real_type expected_cqw = 1.0 / (1.0 + qtotal);
             auto val = cqw[k, iCell];
             RC_ASSERT(std::abs(val - expected_cqw) < tol);
         }
 
-        // Bottom boundary: cqw[nVertLevels, iCell] == cq_cell[nVertLevels-1, iCell]
+        // Bottom boundary: cqw[nVertLevels, iCell] == 1/(1 + qtot[nVertLevels-1, iCell])
         {
+            real_type expected_cqw = 1.0 / (1.0 + getQtot(static_cast<index_type>(nVertLevels) - 1, iCell));
             auto val = cqw[static_cast<index_type>(nVertLevels), iCell];
-            RC_ASSERT(std::abs(val - getCqCell(static_cast<index_type>(nVertLevels) - 1, iCell)) < tol);
+            RC_ASSERT(std::abs(val - expected_cqw) < tol);
         }
     }
 
-    // Verify cqu at edges
+    // Verify cqu at edges: reciprocal of horizontally-averaged moisture
     for (index_type iEdge = 0; iEdge < nEdges; ++iEdge) {
         // Read cellsOnEdge from the mesh connectivity
         index_type cell0 = mc.cellsOnEdge[iEdge, 0];
@@ -226,11 +231,12 @@ RC_GTEST_PROP(MoistCoefficientFormula, ComputedCoefficientsMatchExpectedFormula,
         for (index_type k = 0; k < static_cast<index_type>(nVertLevels); ++k) {
             real_type expected_cqu;
             if (cell1 == SENTINEL) {
-                // Boundary edge: use single adjacent cell
-                expected_cqu = getCqCell(k, cell0);
+                // Boundary edge: use single adjacent cell moisture
+                expected_cqu = 1.0 / (1.0 + getQtot(k, cell0));
             } else {
-                // Interior edge: average of two cells
-                expected_cqu = 0.5 * (getCqCell(k, cell0) + getCqCell(k, cell1));
+                // Interior edge: reciprocal of horizontally-averaged moisture
+                real_type qtotal = 0.5 * (getQtot(k, cell0) + getQtot(k, cell1));
+                expected_cqu = 1.0 / (1.0 + qtotal);
             }
             auto val = cqu[k, iEdge];
             RC_ASSERT(std::abs(val - expected_cqu) < tol);

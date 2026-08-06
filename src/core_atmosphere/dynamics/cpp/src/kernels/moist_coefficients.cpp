@@ -7,18 +7,25 @@
 /// the pressure gradient and buoyancy terms.
 ///
 /// @section governing_equations Governing Equations
-/// The moist coefficient at each cell and level is:
-///   cq_cell(k, iCell) = 1 / (1 + sum_{s=moist_start}^{moist_end} q_s(k, iCell))
+/// The total moisture mixing ratio at each cell and level is:
+///   qtot(k, iCell) = sum_{s=moist_start}^{moist_end} q_s(k, iCell)
 ///
-/// Interface values (cqw) are vertical averages:
-///   cqw(k, iCell) = 0.5 * (cq_cell(k-1, iCell) + cq_cell(k, iCell))
+/// Interface values (cqw) average moisture VERTICALLY, then take the reciprocal:
+///   cqw(k, iCell) = 1 / (1 + 0.5*(qtot(k-1, iCell) + qtot(k, iCell)))
 /// with boundary conditions:
-///   cqw(0, iCell) = cq_cell(0, iCell)              (top)
-///   cqw(nVertLevels, iCell) = cq_cell(nVertLevels-1, iCell) (bottom)
+///   cqw(0, iCell) = 1 / (1 + qtot(0, iCell))                    (top)
+///   cqw(nVertLevels, iCell) = 1 / (1 + qtot(nVertLevels-1, iCell)) (bottom)
 ///
-/// Edge values (cqu) are horizontal averages:
-///   cqu(k, iEdge) = 0.5 * (cq_cell(k, cell0) + cq_cell(k, cell1))
+/// Edge values (cqu) average moisture HORIZONTALLY across adjacent cells,
+/// then take the reciprocal:
+///   cqu(k, iEdge) = 1 / (1 + 0.5*(qtot(k, cell0) + qtot(k, cell1)))
 /// with boundary edges using the single adjacent cell value.
+///
+/// NOTE: The order of operations matters. Averaging the reciprocals
+/// (i.e., 0.5*(1/(1+q_a) + 1/(1+q_b))) is NOT equivalent to taking the
+/// reciprocal of the averaged moisture (i.e., 1/(1 + 0.5*(q_a + q_b))).
+/// This implementation follows the Fortran reference which averages moisture
+/// first, then takes the reciprocal.
 ///
 /// @reference Skamarock, W. C., et al. (2012), "A Multiscale Nonhydrostatic
 /// Atmospheric Model Using Centroidal Voronoi Tesselations and C-Grid Staggering",
@@ -46,7 +53,7 @@ template void compute_moist_coefficients<default_layout, SerialPolicy>(
 /// @brief Implementation of compute_moist_coefficients.
 ///
 /// Uses serial loops internally due to data dependencies (computing the
-/// intermediate cq_cell workspace before averaging to interfaces and edges).
+/// intermediate qtot workspace before averaging to interfaces and edges).
 /// The execution policy parameter is accepted for API consistency but not used
 /// for dispatch in this kernel.
 template <typename Layout, ExecutionPolicy Policy>
@@ -79,43 +86,49 @@ void compute_moist_coefficients(
         return;
     }
 
-    // Temporary workspace for cell-level moist coefficients.
+    // Temporary workspace for total moisture mixing ratio per cell and level.
     // Layout: flat array indexed as [k * nCells + iCell] (row-major for workspace).
-    std::vector<real_type> cq_cell_storage(
+    std::vector<real_type> qtot_storage(
         static_cast<std::size_t>(nVertLevels) * static_cast<std::size_t>(nCells));
 
-    // Lambda to access cq_cell workspace in a 2D manner.
-    auto cq_cell = [&](index_type k, index_type iCell) -> real_type& {
-        return cq_cell_storage[static_cast<std::size_t>(k) * static_cast<std::size_t>(nCells)
-                               + static_cast<std::size_t>(iCell)];
+    // Lambda to access qtot workspace in a 2D manner.
+    auto qtot = [&](index_type k, index_type iCell) -> real_type& {
+        return qtot_storage[static_cast<std::size_t>(k) * static_cast<std::size_t>(nCells)
+                            + static_cast<std::size_t>(iCell)];
     };
 
-    // Step 1: Compute cell-level moist coefficient cq_cell(k, iCell).
+    // Step 1: Compute total moisture qtot(k, iCell) at each cell and level.
     for (index_type iCell = 0; iCell < nCells; ++iCell) {
         for (index_type k = 0; k < nVertLevels; ++k) {
             real_type sum = 0.0;
             for (index_type s = moist_start; s <= moist_end; ++s) {
                 sum += scalars[s, k, iCell];
             }
-            cq_cell(k, iCell) = 1.0 / (1.0 + sum);
+            qtot(k, iCell) = sum;
         }
     }
 
-    // Step 2: Compute cqw at cell interfaces by vertical averaging.
+    // Step 2: Compute cqw at cell interfaces.
+    // The reciprocal is taken AFTER averaging moisture vertically.
+    // Fortran: cqw(k,iCell) = 1/(1 + 0.5*(qtot(k,iCell)+qtot(k-1,iCell))) for k=2..nVertLevels (1-based)
+    // C++ 0-based: k=1..nVertLevels-1 are interior interfaces.
     for (index_type iCell = 0; iCell < nCells; ++iCell) {
-        // Top boundary: copy level 0 value
-        cqw[0, iCell] = cq_cell(0, iCell);
+        // Top boundary (k=0): use level 0 moisture directly
+        cqw[0, iCell] = 1.0 / (1.0 + qtot(0, iCell));
 
-        // Interior interfaces: average adjacent levels
+        // Interior interfaces: reciprocal of vertically-averaged moisture
         for (index_type k = 1; k < nVertLevels; ++k) {
-            cqw[k, iCell] = 0.5 * (cq_cell(k - 1, iCell) + cq_cell(k, iCell));
+            real_type qtotal = 0.5 * (qtot(k - 1, iCell) + qtot(k, iCell));
+            cqw[k, iCell] = 1.0 / (1.0 + qtotal);
         }
 
-        // Bottom boundary: copy last level value
-        cqw[nVertLevels, iCell] = cq_cell(nVertLevels - 1, iCell);
+        // Bottom boundary (k=nVertLevels): use last level moisture directly
+        cqw[nVertLevels, iCell] = 1.0 / (1.0 + qtot(nVertLevels - 1, iCell));
     }
 
-    // Step 3: Compute cqu at edges by horizontal averaging of adjacent cells.
+    // Step 3: Compute cqu at edges.
+    // The reciprocal is taken AFTER averaging moisture horizontally across adjacent cells.
+    // Fortran: cqu(k,iEdge) = 1/(1 + 0.5*(qtot(k,cell1)+qtot(k,cell2)))
     for (index_type iEdge = 0; iEdge < nEdges; ++iEdge) {
         index_type cell0 = mesh.cellsOnEdge[iEdge, 0];
         index_type cell1 = mesh.cellsOnEdge[iEdge, 1];
@@ -123,12 +136,13 @@ void compute_moist_coefficients(
         if (cell1 == INVALID_INDEX) {
             // Boundary edge: use single adjacent cell value
             for (index_type k = 0; k < nVertLevels; ++k) {
-                cqu[k, iEdge] = cq_cell(k, cell0);
+                cqu[k, iEdge] = 1.0 / (1.0 + qtot(k, cell0));
             }
         } else {
-            // Interior edge: average the two adjacent cells
+            // Interior edge: reciprocal of horizontally-averaged moisture
             for (index_type k = 0; k < nVertLevels; ++k) {
-                cqu[k, iEdge] = 0.5 * (cq_cell(k, cell0) + cq_cell(k, cell1));
+                real_type qtotal = 0.5 * (qtot(k, cell0) + qtot(k, cell1));
+                cqu[k, iEdge] = 1.0 / (1.0 + qtotal);
             }
         }
     }

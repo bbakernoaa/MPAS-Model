@@ -11,6 +11,9 @@
 #include <mpas_dycore/error.hpp>
 #include <mpas_dycore/state.hpp>
 #include <mpas_dycore/mesh.hpp>
+#include <mpas_dycore/geometry.hpp>
+#include <mpas_dycore/workspace.hpp>
+#include <mpas_dycore/srk3.hpp>
 #include <mpas_dycore/types.hpp>
 
 #include <mpi.h>
@@ -214,6 +217,10 @@ int mpas_dycore_cpp_init(
         state.dt = dt;
         state.number_of_sub_steps = number_of_sub_steps;
 
+        // ---- Allocate SRK3 workspace ----
+        state.srk3_workspace.allocate(
+            state.nCells, state.nEdges, state.nVertices, state.nVertLevels);
+
         // ---- Set status to Ready ----
         state.status = DycoreStatus::Ready;
     });
@@ -250,9 +257,6 @@ int mpas_dycore_cpp_timestep(
 
     return api_wrap(errmsg, errmsg_len, [&]() {
         // ---- Construct mdspan views from raw pointers + extent metadata ----
-        // For now (stub): validate that fields are non-null and extents match
-        // state dimensions. The actual SRK3 integration will be connected in
-        // task 19.2.
 
         if (u == nullptr) {
             throw std::invalid_argument("u field pointer is null");
@@ -311,37 +315,247 @@ int mpas_dycore_cpp_timestep(
         // Store nScalars from the first call for future use
         state.nScalars = static_cast<index_type>(scalars_d0);
 
-        // Construct mdspan views (used by SRK3 integrator in task 19.2)
-        [[maybe_unused]] Field2D<> u_view(
+        // Construct mdspan views over prognostic field data
+        Field2D<> u_view(
             u,
             static_cast<index_type>(u_d0),
             static_cast<index_type>(u_d1));
 
-        [[maybe_unused]] Field2D<> theta_m_view(
+        Field2D<> theta_m_view(
             theta_m,
             static_cast<index_type>(theta_m_d0),
             static_cast<index_type>(theta_m_d1));
 
-        [[maybe_unused]] Field2D<> rho_zz_view(
+        Field2D<> rho_zz_view(
             rho_zz,
             static_cast<index_type>(rho_zz_d0),
             static_cast<index_type>(rho_zz_d1));
 
-        [[maybe_unused]] Field2D<> w_view(
+        Field2D<> w_view(
             w,
             static_cast<index_type>(w_d0),
             static_cast<index_type>(w_d1));
 
-        [[maybe_unused]] Field3D<> scalars_view(
+        Field3D<> scalars_view(
             scalars,
             static_cast<index_type>(scalars_d0),
             static_cast<index_type>(scalars_d1),
             static_cast<index_type>(scalars_d2));
 
-        // TODO(task 19.2): Connect SRK3 integration here.
-        // For now this is a validation-only stub that confirms the API
-        // contract is met (non-null pointers, correct extents).
+        // ---- Validate geometry has been set ----
+        if (!state.geometry.populated()) {
+            throw std::invalid_argument(
+                "Geometry not set; call mpas_dycore_cpp_set_geometry before timestep");
+        }
+
+        // ---- Configure and run the SRK3 integrator ----
+        SRK3Config cfg;
+        cfg.dt = state.dt;
+        cfg.number_of_sub_steps = state.number_of_sub_steps;
+        cfg.dts = cfg.dt / static_cast<real_type>(cfg.number_of_sub_steps);
+        cfg.n_rk_stages = 3;
+
+        SRK3Integrator integrator(cfg);
+
+        integrator.timestep(
+            u_view, theta_m_view, rho_zz_view, w_view, scalars_view,
+            state.srk3_workspace, state.geometry, state.mesh,
+            state.halo, state.halo_desc, state.comm,
+            state.nCells, state.nEdges, state.nVertices, state.nVertLevels);
     });
+}
+
+// ============================================================================
+// mpas_dycore_cpp_set_geometry
+// ============================================================================
+
+int mpas_dycore_cpp_set_geometry(
+    /* Cell geometry */
+    const double* areaCell, const double* invAreaCell,
+    /* Edge geometry */
+    const double* dvEdge, const double* dcEdge, const double* invDcEdge,
+    /* Vertical metrics */
+    const double* rdzw, const double* rdzu,
+    const double* fzm, const double* fzp,
+    const double* etp, const double* etm,
+    const double* ewp, const double* ewm,
+    /* Terrain metric */
+    const double* zz,
+    /* Base-state profiles */
+    const double* rb, const double* rtb, const double* pb,
+    /* Edge orientation signs */
+    const double* edgesOnCell_sign,
+    /* Specified zone masks */
+    const double* specZoneMaskEdge, const double* specZoneMaskCell,
+    /* Edge reconstruction data (TRiSK) */
+    const double* weightsOnEdge,
+    const int* nEdgesOnEdge,
+    const int* edgesOnEdge,
+    /* Advection stencils */
+    const int* advCellsForEdge,
+    const int* nAdvCellsForEdge,
+    const double* adv_coefs,
+    const double* adv_coefs_3rd,
+    /* Vertex geometry */
+    const double* fVertex, const double* areaTriangle,
+    /* Terrain correction arrays for w recovery */
+    const double* zb_cell_ptr, const double* zb3_cell_ptr,
+    /* Base-state profiles for perturbation formulation */
+    const double* rho_base_ptr, const double* rtheta_base_ptr, const double* exner_base_ptr,
+    /* Vertical extrapolation coefficients */
+    double cf1, double cf2, double cf3,
+    /* Per-cell edge count for terrain correction */
+    const int* nEdgesOnCell_ptr,
+    /* Dimension metadata */
+    int nCells, int nEdges, int nVertices, int nVertLevels,
+    int maxEdges, int maxEdges2, int maxAdvCells,
+    /* Error output */
+    char* errmsg, int errmsg_len
+) {
+    using namespace mpas::dycore;
+
+    auto& state = get_dycore_state();
+
+    // ---- Uninitialized-state guard ----
+    if (state.status != DycoreStatus::Ready) {
+        const char* msg = "dycore not initialized; call mpas_dycore_cpp_init first";
+        if (errmsg != nullptr && errmsg_len > 0) {
+            std::strncpy(errmsg, msg, static_cast<std::size_t>(errmsg_len - 1));
+            errmsg[errmsg_len - 1] = '\0';
+        }
+        return 1;
+    }
+
+    return api_wrap(errmsg, errmsg_len, [&]() {
+        // ---- Validate all pointers are non-null ----
+        if (areaCell == nullptr) throw std::invalid_argument("areaCell pointer is null");
+        if (invAreaCell == nullptr) throw std::invalid_argument("invAreaCell pointer is null");
+        if (dvEdge == nullptr) throw std::invalid_argument("dvEdge pointer is null");
+        if (dcEdge == nullptr) throw std::invalid_argument("dcEdge pointer is null");
+        if (invDcEdge == nullptr) throw std::invalid_argument("invDcEdge pointer is null");
+        if (rdzw == nullptr) throw std::invalid_argument("rdzw pointer is null");
+        if (rdzu == nullptr) throw std::invalid_argument("rdzu pointer is null");
+        if (fzm == nullptr) throw std::invalid_argument("fzm pointer is null");
+        if (fzp == nullptr) throw std::invalid_argument("fzp pointer is null");
+        if (etp == nullptr) throw std::invalid_argument("etp pointer is null");
+        if (etm == nullptr) throw std::invalid_argument("etm pointer is null");
+        if (ewp == nullptr) throw std::invalid_argument("ewp pointer is null");
+        if (ewm == nullptr) throw std::invalid_argument("ewm pointer is null");
+        if (zz == nullptr) throw std::invalid_argument("zz pointer is null");
+        if (rb == nullptr) throw std::invalid_argument("rb pointer is null");
+        if (rtb == nullptr) throw std::invalid_argument("rtb pointer is null");
+        if (pb == nullptr) throw std::invalid_argument("pb pointer is null");
+        if (edgesOnCell_sign == nullptr) throw std::invalid_argument("edgesOnCell_sign pointer is null");
+        if (specZoneMaskEdge == nullptr) throw std::invalid_argument("specZoneMaskEdge pointer is null");
+        if (specZoneMaskCell == nullptr) throw std::invalid_argument("specZoneMaskCell pointer is null");
+        if (weightsOnEdge == nullptr) throw std::invalid_argument("weightsOnEdge pointer is null");
+        if (nEdgesOnEdge == nullptr) throw std::invalid_argument("nEdgesOnEdge pointer is null");
+        if (edgesOnEdge == nullptr) throw std::invalid_argument("edgesOnEdge pointer is null");
+        if (advCellsForEdge == nullptr) throw std::invalid_argument("advCellsForEdge pointer is null");
+        if (nAdvCellsForEdge == nullptr) throw std::invalid_argument("nAdvCellsForEdge pointer is null");
+        if (adv_coefs == nullptr) throw std::invalid_argument("adv_coefs pointer is null");
+        if (adv_coefs_3rd == nullptr) throw std::invalid_argument("adv_coefs_3rd pointer is null");
+        if (fVertex == nullptr) throw std::invalid_argument("fVertex pointer is null");
+        if (areaTriangle == nullptr) throw std::invalid_argument("areaTriangle pointer is null");
+
+        // ---- Validate dimension metadata matches stored mesh dimensions ----
+        if (static_cast<index_type>(nCells) != state.nCells) {
+            throw std::invalid_argument(
+                "nCells mismatch: passed " + std::to_string(nCells) +
+                " but init stored " + std::to_string(state.nCells));
+        }
+        if (static_cast<index_type>(nEdges) != state.nEdges) {
+            throw std::invalid_argument(
+                "nEdges mismatch: passed " + std::to_string(nEdges) +
+                " but init stored " + std::to_string(state.nEdges));
+        }
+        if (static_cast<index_type>(nVertices) != state.nVertices) {
+            throw std::invalid_argument(
+                "nVertices mismatch: passed " + std::to_string(nVertices) +
+                " but init stored " + std::to_string(state.nVertices));
+        }
+        if (static_cast<index_type>(nVertLevels) != state.nVertLevels) {
+            throw std::invalid_argument(
+                "nVertLevels mismatch: passed " + std::to_string(nVertLevels) +
+                " but init stored " + std::to_string(state.nVertLevels));
+        }
+        if (static_cast<index_type>(maxEdges) != state.maxEdges) {
+            throw std::invalid_argument(
+                "maxEdges mismatch: passed " + std::to_string(maxEdges) +
+                " but init stored " + std::to_string(state.maxEdges));
+        }
+        if (maxEdges2 <= 0) {
+            throw std::invalid_argument(
+                "maxEdges2 must be positive, got " + std::to_string(maxEdges2));
+        }
+        if (maxAdvCells <= 0) {
+            throw std::invalid_argument(
+                "maxAdvCells must be positive, got " + std::to_string(maxAdvCells));
+        }
+
+        // ---- Populate geometry from raw pointers ----
+        state.geometry.populate(
+            areaCell, invAreaCell,
+            dvEdge, dcEdge, invDcEdge,
+            rdzw, rdzu,
+            fzm, fzp,
+            etp, etm,
+            ewp, ewm,
+            zz,
+            rb, rtb, pb,
+            edgesOnCell_sign,
+            specZoneMaskEdge, specZoneMaskCell,
+            weightsOnEdge,
+            nEdgesOnEdge, edgesOnEdge,
+            advCellsForEdge, nAdvCellsForEdge,
+            adv_coefs, adv_coefs_3rd,
+            fVertex, areaTriangle,
+            zb_cell_ptr, zb3_cell_ptr,
+            rho_base_ptr, rtheta_base_ptr, exner_base_ptr,
+            nEdgesOnCell_ptr,
+            cf1, cf2, cf3,
+            static_cast<index_type>(nCells),
+            static_cast<index_type>(nEdges),
+            static_cast<index_type>(nVertices),
+            static_cast<index_type>(nVertLevels),
+            static_cast<index_type>(maxEdges),
+            static_cast<index_type>(maxEdges2),
+            static_cast<index_type>(maxAdvCells));
+    });
+}
+
+// ============================================================================
+// mpas_dycore_cpp_set_callbacks
+// ============================================================================
+
+int mpas_dycore_cpp_set_callbacks(
+    mpas_compute_dyn_tend_cb_t compute_dyn_tend_cb,
+    mpas_advance_acoustic_step_cb_t advance_acoustic_step_cb,
+    mpas_advance_scalars_mono_cb_t advance_scalars_mono_cb,
+    mpas_halo_exchange_cb_t halo_exchange_cb
+) {
+    using namespace mpas::dycore;
+
+    auto& state = get_dycore_state();
+
+    // ---- Uninitialized-state guard ----
+    if (state.status != DycoreStatus::Ready) {
+        return 1;
+    }
+
+    // ---- Store callback pointers ----
+    state.compute_dyn_tend_cb = compute_dyn_tend_cb;
+    state.advance_acoustic_step_cb = advance_acoustic_step_cb;
+    state.advance_scalars_mono_cb = advance_scalars_mono_cb;
+    state.halo_exchange_cb = halo_exchange_cb;
+
+    // ---- Set dispatch flags: non-NULL → use callback (false), NULL → use C++ (true) ----
+    state.use_cpp_compute_dyn_tend = (compute_dyn_tend_cb == nullptr);
+    state.use_cpp_advance_acoustic_step = (advance_acoustic_step_cb == nullptr);
+    state.use_cpp_advance_scalars_mono = (advance_scalars_mono_cb == nullptr);
+    state.use_cpp_halo_exchange = (halo_exchange_cb == nullptr);
+
+    return 0;
 }
 
 // ============================================================================
@@ -357,6 +571,12 @@ int mpas_dycore_cpp_finalize(char* errmsg, int errmsg_len) {
         // ---- Clear workspace ----
         state.workspace.clear();
         state.workspace.shrink_to_fit();
+
+        // ---- Clear SRK3 workspace ----
+        state.srk3_workspace = SRK3Workspace{};
+
+        // ---- Clear geometry ----
+        state.geometry = MeshGeometry{};
 
         // ---- Clear connectivity storage ----
         state.connectivity_storage.clear();

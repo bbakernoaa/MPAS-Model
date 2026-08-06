@@ -8,11 +8,21 @@
 /// accessor policies are propagated as template parameters to all kernel instantiations,
 /// enabling source-level portability across memory orderings and bounds-checking modes.
 
+#if __has_include(<mdspan>)
 #include <mdspan>
+#elif __has_include(<experimental/mdspan>)
+#include <experimental/mdspan>
+// The Kokkos reference implementation polyfills std::mdspan, std::extents,
+// std::layout_left, std::layout_right, and std::dynamic_extent directly
+// into the std:: namespace when included via <experimental/mdspan>.
+#else
+#error "No mdspan implementation found. Install GCC 14+, or the Kokkos mdspan reference implementation."
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <concepts>
+#include <type_traits>
 
 namespace mpas::dycore {
 
@@ -38,6 +48,11 @@ using layout_right = std::layout_right;
 
 /// Default layout: column-major to match Fortran memory ordering from the marshalling layer.
 using default_layout = layout_left;
+
+/// Safety check: The Fortran marshalling layer passes column-major arrays.
+/// If this layout is changed, all field data from Fortran will be misinterpreted.
+static_assert(std::is_same_v<default_layout, layout_left>,
+    "default_layout must be layout_left (column-major) to match Fortran memory ordering");
 
 // ============================================================================
 // Accessor policies

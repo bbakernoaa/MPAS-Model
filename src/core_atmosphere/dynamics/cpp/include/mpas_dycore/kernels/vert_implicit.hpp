@@ -5,15 +5,15 @@
 ///
 /// This kernel computes the tridiagonal matrix coefficients used in the vertically
 /// implicit treatment of acoustic/gravity wave modes during the acoustic timestep.
-/// These coefficients depend on the acoustic timestep (dts) and the thermodynamic
-/// state, and need recomputation only when dts changes between RK stages.
+/// It is a faithful line-by-line port of the Fortran subroutine
+/// `atm_compute_vert_imp_coefs_work` from mpas_atm_time_integration.F.
 ///
 /// @section algorithm Algorithm
 /// The vertically implicit solve couples the w (vertical velocity), theta
 /// (potential temperature), and rho (density) equations through a tridiagonal
-/// system in the vertical. The coupling coefficients are derived from the
-/// linearized equations with an off-centering parameter (epssm = 0.5) that
-/// controls the implicit/explicit split of the acoustic mode treatment.
+/// system in the vertical. The kernel computes intermediate coupling coefficients
+/// (cofwr, cofwz, coftz, cofwt) and then assembles and LU-factorizes the
+/// tridiagonal matrix (a_tri, alpha_tri, gamma_tri) via a forward sweep.
 ///
 /// @reference Klemp, J. B., Skamarock, W. C., and Dudhia, J. (2007),
 /// "Conservative Split-Explicit Time Integration Methods for the Compressible
@@ -24,92 +24,95 @@
 
 namespace mpas::dycore::kernels {
 
+/// @brief 1D mutable mdspan (dynamic extent).
+using Span1D = std::mdspan<real_type,
+    std::extents<index_type, std::dynamic_extent>>;
+
+/// @brief 1D const mdspan (dynamic extent).
+using ConstSpan1D = std::mdspan<const real_type,
+    std::extents<index_type, std::dynamic_extent>>;
+
 /// @brief Compute vertical implicit solve coefficients for the acoustic step.
 ///
-/// Produces the tridiagonal matrix coefficients used in the vertically implicit
-/// treatment of acoustic/gravity wave modes. These coefficients depend on the
-/// acoustic timestep (dts) and the thermodynamic state, and need recomputation
-/// only when dts changes between RK stages.
+/// Faithful port of `atm_compute_vert_imp_coefs_work`. Computes the intermediate
+/// coefficients (cofwr, cofwz, coftz, cofwt) and performs the tridiagonal LU
+/// factorization (a_tri, alpha_tri, gamma_tri) for the vertically implicit solver.
 ///
-/// The formulation follows Klemp et al. (2007) Eqs. 3.12-3.17. For interior
-/// interfaces k = 1 to nVertLevels-1:
+/// Key differences from the old formulation:
+/// - cofrz is 1D: simply rdzw[k]
+/// - cofwr = 0.5*gravity*(fzm[k]*zz[k] + fzp[k]*zz[k-1])  (no dts or epssm)
+/// - cofwz = c2*(fzm[k]*zz[k]+fzp[k]*zz[k-1])*rdzu[k]*cqw[k]*(fzm[k]*p[k]+fzp[k]*p[k-1])
+/// - coftz = theta at interfaces: fzm[k]*t[k] + fzp[k]*t[k-1]
+/// - cofwt = 0.5*rcv*zz[k]*gravity*rb[k]/(1+qtot[k]) * p[k]/((rtb[k]+rt[k])*pb[k])
+/// - Tridiagonal assembly uses etp/ewp weighting
+/// - LU factorization: alpha_tri = 1/(1+dts^2*(b_tri - a_tri*gamma_tri(k-1)))
+///                     gamma_tri = dts^2 * c_tri * alpha_tri
 ///
-///   theta_interface = fzm[k] * theta_m[k, iCell] + fzp[k] * theta_m[k-1, iCell]
-///   rho_interface   = fzm[k] * rho_zz[k, iCell]  + fzp[k] * rho_zz[k-1, iCell]
-///
-///   cofwr(k, iCell) = epssm * dts * rho_interface * rdzu[k]
-///   cofwz(k, iCell) = epssm * dts * (rdry/cvdry) * theta_interface * rdzu[k] * cqw[k, iCell]
-///   coftz(k, iCell) = epssm * dts * gravity * rho_zz[k, iCell]
-///   cofwt(k, iCell) = epssm * dts * (theta_m[k, iCell] - theta_m[k-1, iCell]) * rdzu[k]
-///
-/// Tridiagonal assembly:
-///   a_tri(k)     = -cofwz(k) * coftz(k)              (lower diagonal)
-///   gamma_tri(k) = -cofwz(k+1) * coftz(k)            (upper diagonal)
-///   alpha_tri(k) = 1 + cofwz(k)*coftz(k-1) + cofwz(k+1)*coftz(k) (main diagonal)
-///   cofrz(k)     = cofwr(k) * rho_zz(k, iCell)
-///
-/// Boundary conditions: cofwr, cofwz, cofwt = 0 at k=0 and k=nVertLevels.
-///
-/// Output fields:
-///   cofwr: coefficient for w in the rho equation (nVertLevels+1, nCells)
-///   cofwz: coefficient for w in the z-momentum equation (nVertLevels+1, nCells)
-///   coftz: coefficient for theta in z-momentum (nVertLevels, nCells)
-///   cofwt: coefficient for w in the theta equation (nVertLevels+1, nCells)
-///   a_tri: tridiagonal lower diagonal (nVertLevels, nCells)
-///   alpha_tri: tridiagonal main diagonal factor (nVertLevels, nCells)
-///   gamma_tri: tridiagonal upper diagonal (nVertLevels, nCells)
-///   cofrz: coefficient for rho-zz in the z equation (nVertLevels, nCells)
-///
-/// @reference Klemp, J. B., Skamarock, W. C., and Dudhia, J. (2007),
-/// "Conservative Split-Explicit Time Integration Methods for the Compressible
-/// Nonhydrostatic Equations", Mon. Wea. Rev., 135, 2897-2913.
+/// Indexing convention (0-based C++ vs 1-based Fortran):
+/// - Fortran k=1 → C++ k=0
+/// - Fortran k=2..nVertLevels → C++ k=1..nVertLevels-1
+/// - coftz has nVertLevels+1 entries: coftz[0]=0, coftz[k] for k=1..nVL-1, coftz[nVL]=0
+/// - cofwr, cofwz are at interfaces k=1..nVertLevels-1 (Fortran k=2..nVertLevels)
+/// - cofwt is at levels k=0..nVertLevels-1 (Fortran k=1..nVertLevels)
 ///
 /// @tparam Layout  mdspan layout policy.
 /// @tparam Policy  Execution policy.
 ///
 /// @param[in]  policy       Execution policy (accepted for API consistency).
-/// @param[out] cofwr        Coefficient for w in rho equation (nVertLevels+1, nCells).
-/// @param[out] cofwz        Coefficient for w in z-momentum equation (nVertLevels+1, nCells).
-/// @param[out] coftz        Coefficient for theta in z equation (nVertLevels, nCells).
-/// @param[out] cofwt        Coefficient for w in theta equation (nVertLevels+1, nCells).
+/// @param[out] cofwr        Interface coefficient for w-rho coupling (nVertLevels, nCells).
+/// @param[out] cofwz        Interface coefficient for w-pressure coupling (nVertLevels, nCells).
+/// @param[out] coftz        Theta at interfaces (nVertLevels+1, nCells).
+/// @param[out] cofwt        Level coefficient for w-theta coupling (nVertLevels, nCells).
 /// @param[out] a_tri        Tridiagonal lower diagonal (nVertLevels, nCells).
-/// @param[out] alpha_tri    Tridiagonal main diagonal factor (nVertLevels, nCells).
-/// @param[out] gamma_tri    Tridiagonal upper diagonal (nVertLevels, nCells).
-/// @param[out] cofrz        Coefficient for rho-zz in z equation (nVertLevels, nCells).
-/// @param[in]  theta_m      Moist potential temperature (nVertLevels, nCells).
-/// @param[in]  rho_zz       Dry density times height factor (nVertLevels, nCells).
-/// @param[in]  cqw          Moist coefficient at interfaces (nVertLevels+1, nCells).
-/// @param[in]  rdzu         Reciprocal vertical spacing at interfaces (nVertLevels+1).
-/// @param[in]  fzm          Interpolation weight to interface from level k (nVertLevels+1).
-/// @param[in]  fzp          Interpolation weight to interface from level k-1 (nVertLevels+1).
+/// @param[out] alpha_tri    Tridiagonal LU factored inverse (nVertLevels, nCells).
+/// @param[out] gamma_tri    Tridiagonal LU factored upper (nVertLevels, nCells).
+/// @param[out] cofrz        1D output: simply rdzw[k] (nVertLevels).
+/// @param[in]  zz           Terrain height factor (nVertLevels, nCells).
+/// @param[in]  p            Modified pressure / Exner function (nVertLevels, nCells).
+/// @param[in]  t            Moist potential temperature theta_m (nVertLevels, nCells).
+/// @param[in]  rb           Base-state dry density (nVertLevels, nCells).
+/// @param[in]  rtb          Base-state rho*theta (nVertLevels, nCells).
+/// @param[in]  pb           Base-state pressure (nVertLevels, nCells).
+/// @param[in]  rt           Perturbation rho*theta (nVertLevels, nCells).
+/// @param[in]  cqw          Moist coefficient at interfaces (nVertLevels, nCells).
+/// @param[in]  qtot         Total moisture mixing ratio (nVertLevels, nCells).
+/// @param[in]  rdzw         Reciprocal of dz at cell centers (nVertLevels).
+/// @param[in]  fzm          Interpolation weight from level k (nVertLevels).
+/// @param[in]  fzp          Interpolation weight from level k-1 (nVertLevels).
+/// @param[in]  rdzu         Reciprocal of dz at interfaces (nVertLevels).
+/// @param[in]  etp          Off-centering weight at levels (nVertLevels).
+/// @param[in]  ewp          Off-centering weight at interfaces (nVertLevels+1).
 /// @param[in]  dts          Acoustic timestep.
-/// @param[in]  gravity      Gravitational acceleration.
-/// @param[in]  rdry         Gas constant for dry air.
-/// @param[in]  cvdry        Specific heat at constant volume for dry air.
 /// @param[in]  nCells       Number of cells.
 /// @param[in]  nVertLevels  Number of vertical levels.
 template <typename Layout = default_layout,
           ExecutionPolicy Policy = SerialPolicy>
 void compute_vert_imp_coefs(
     Policy policy,
-    Field2D<Layout, unchecked_accessor> cofwr,       // output: (nVertLevels+1, nCells)
-    Field2D<Layout, unchecked_accessor> cofwz,       // output: (nVertLevels+1, nCells)
-    Field2D<Layout, unchecked_accessor> coftz,       // output: (nVertLevels, nCells)
-    Field2D<Layout, unchecked_accessor> cofwt,       // output: (nVertLevels+1, nCells)
+    Field2D<Layout, unchecked_accessor> cofwr,       // output: (nVertLevels, nCells)
+    Field2D<Layout, unchecked_accessor> cofwz,       // output: (nVertLevels, nCells)
+    Field2D<Layout, unchecked_accessor> coftz,       // output: (nVertLevels+1, nCells)
+    Field2D<Layout, unchecked_accessor> cofwt,       // output: (nVertLevels, nCells)
     Field2D<Layout, unchecked_accessor> a_tri,       // output: (nVertLevels, nCells)
     Field2D<Layout, unchecked_accessor> alpha_tri,   // output: (nVertLevels, nCells)
     Field2D<Layout, unchecked_accessor> gamma_tri,   // output: (nVertLevels, nCells)
-    Field2D<Layout, unchecked_accessor> cofrz,       // output: (nVertLevels, nCells)
-    ConstField2D<Layout, unchecked_accessor> theta_m,// input: moist potential temp (nVertLevels, nCells)
-    ConstField2D<Layout, unchecked_accessor> rho_zz, // input: dry density (nVertLevels, nCells)
-    ConstField2D<Layout, unchecked_accessor> cqw,    // input: moist coefficient (nVertLevels+1, nCells)
-    std::mdspan<const real_type, std::extents<index_type, std::dynamic_extent>> rdzu,  // input: reciprocal vertical spacing (nVertLevels+1)
-    std::mdspan<const real_type, std::extents<index_type, std::dynamic_extent>> fzm,   // input: interp weight from level k (nVertLevels+1)
-    std::mdspan<const real_type, std::extents<index_type, std::dynamic_extent>> fzp,   // input: interp weight from level k-1 (nVertLevels+1)
-    real_type dts,                                    // acoustic timestep
-    real_type gravity,                                // gravitational acceleration
-    real_type rdry,                                   // gas constant for dry air
-    real_type cvdry,                                  // specific heat at const volume
+    Span1D cofrz,                                    // output: 1D (nVertLevels)
+    ConstField2D<Layout, unchecked_accessor> zz,     // input: terrain height factor (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> p,      // input: modified pressure (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> t,      // input: theta_m (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> rb,     // input: base-state density (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> rtb,    // input: base-state rho*theta (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> pb,     // input: base-state pressure (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> rt,     // input: perturbation rho*theta (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> cqw,    // input: moist coefficient (nVertLevels, nCells)
+    ConstField2D<Layout, unchecked_accessor> qtot,   // input: total moisture (nVertLevels, nCells)
+    ConstSpan1D rdzw,                                // input: reciprocal dz at centers (nVertLevels)
+    ConstSpan1D fzm,                                 // input: interp weight from level k (nVertLevels)
+    ConstSpan1D fzp,                                 // input: interp weight from level k-1 (nVertLevels)
+    ConstSpan1D rdzu,                                // input: reciprocal dz at interfaces (nVertLevels)
+    ConstSpan1D etp,                                 // input: off-centering at levels (nVertLevels)
+    ConstSpan1D ewp,                                 // input: off-centering at interfaces (nVertLevels+1)
+    real_type dts,                                   // acoustic timestep
     index_type nCells,
     index_type nVertLevels);
 
